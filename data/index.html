@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EasyFSK-PLUS32</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lora:wght@500;600;700&family=Montserrat:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --text: #120d38;
+    --muted: #5b5678;
+    --bg: #f4f2fb;
+    --card-bg: #ffffff;
+    --border: #ddd8f0;
+    --accent: #dba41c;
+    --accent-text: #120d38;
+    --ok: #1c8a4c;
+    --bad: #c23b3b;
+    --input-bg: #ffffff;
+  }
+  [data-theme="dark"] {
+    --text: #f0eefc;
+    --muted: #b3aed6;
+    --bg: #14112b;
+    --card-bg: #1e1a3d;
+    --border: #332e5c;
+    --accent: #dba41c;
+    --accent-text: #120d38;
+    --ok: #4fd989;
+    --bad: #ff8080;
+    --input-bg: #241f47;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Montserrat', sans-serif;
+    min-height: 100vh;
+  }
+  h1, h2, h3 { font-family: 'Lora', serif; margin: 0 0 .5em; }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 1rem 1.25rem; border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 1.3rem; }
+  .badge {
+    display: inline-flex; align-items: center; gap: .4em;
+    font-size: .8rem; color: var(--muted);
+  }
+  .dot { width: .55em; height: .55em; border-radius: 50%; background: var(--bad); display: inline-block; }
+  .dot.connected { background: var(--ok); }
+  .iconbtn {
+    background: none; border: 1px solid var(--border); color: var(--text);
+    border-radius: .5em; padding: .4em .7em; cursor: pointer; font-size: .9rem;
+  }
+  nav {
+    display: flex; gap: .5rem; padding: 0 1.25rem; border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+  }
+  nav button {
+    background: none; border: none; padding: .8rem .9rem; cursor: pointer;
+    color: var(--muted); font-family: 'Montserrat', sans-serif; font-size: .95rem;
+    border-bottom: 3px solid transparent; white-space: nowrap;
+  }
+  nav button.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+  main { max-width: 720px; margin: 0 auto; padding: 1.25rem; }
+  .card {
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: .9em;
+    padding: 1.1rem 1.25rem; margin-bottom: 1rem;
+  }
+  .row { display: flex; gap: 1rem; flex-wrap: wrap; }
+  .field { flex: 1 1 200px; margin-bottom: .9rem; }
+  label { display: block; font-size: .88rem; font-weight: 600; margin-bottom: .3em; }
+  .hint { font-size: .78rem; color: var(--muted); margin-top: .3em; }
+  input[type=text], input[type=number], select {
+    width: 100%; padding: .55em .6em; border-radius: .5em; border: 1px solid var(--border);
+    background: var(--input-bg); color: var(--text); font-family: inherit; font-size: .95rem;
+  }
+  input[type=checkbox] { width: 1.1em; height: 1.1em; vertical-align: middle; margin-right: .4em; }
+  button.primary {
+    background: var(--accent); color: var(--accent-text); border: none; border-radius: .6em;
+    padding: .65em 1.3em; font-weight: 600; cursor: pointer; font-family: inherit; font-size: .95rem;
+  }
+  button.secondary {
+    background: none; border: 1px solid var(--border); color: var(--text); border-radius: .6em;
+    padding: .65em 1.3em; cursor: pointer; font-family: inherit; font-size: .95rem;
+  }
+  button.danger { border-color: var(--bad); color: var(--bad); }
+  .actions { display: flex; gap: .6rem; flex-wrap: wrap; margin-top: .5rem; }
+  .msg { font-size: .85rem; margin-top: .7rem; padding: .6em .8em; border-radius: .5em; display: none; }
+  .msg.ok { display: block; background: rgba(28,138,76,.12); color: var(--ok); }
+  .msg.bad { display: block; background: rgba(194,59,59,.12); color: var(--bad); }
+  .statgrid { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; }
+  .statgrid .item { padding: .8rem; border: 1px solid var(--border); border-radius: .7em; }
+  .statgrid .label { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .statgrid .value { font-size: 1.15rem; font-weight: 600; margin-top: .15em; }
+  .livetext {
+    font-family: monospace; font-size: 1rem; background: var(--input-bg);
+    border: 1px solid var(--border); border-radius: .6em; padding: .8em; min-height: 2.4em;
+    white-space: pre-wrap; word-break: break-all; margin-top: .8rem;
+  }
+  .tab { display: none; }
+  .tab.active { display: block; }
+  #staticFields { display: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>EasyFSK-PLUS32</h1>
+  <div style="display:flex; align-items:center; gap:1rem;">
+    <span class="badge"><span id="connDot" class="dot"></span><span id="connText">connecting…</span></span>
+    <button class="iconbtn" id="themeToggle" title="Toggle dark mode">🌓</button>
+  </div>
+</header>
+
+<nav>
+  <button data-tab="status" class="active">Status</button>
+  <button data-tab="config">Configuration</button>
+  <button data-tab="send">Send</button>
+  <button data-tab="backup">Backup / Restore</button>
+</nav>
+
+<main>
+
+  <!-- STATUS -->
+  <section id="tab-status" class="tab active">
+    <div class="card">
+      <h2>Live status</h2>
+      <div class="statgrid">
+        <div class="item"><div class="label">Callsign</div><div class="value" id="stCallsign">—</div></div>
+        <div class="item"><div class="label">State</div><div class="value" id="stState">—</div></div>
+        <div class="item"><div class="label">PTT source</div><div class="value" id="stSource">—</div></div>
+        <div class="item"><div class="label">Buffer pending</div><div class="value" id="stBuffer">0</div></div>
+      </div>
+      <div class="hint" style="margin-top:.8rem;">Live transmitted text:</div>
+      <div class="livetext" id="stLiveText"></div>
+    </div>
+    <div class="card">
+      <h2>System</h2>
+      <div class="statgrid">
+        <div class="item"><div class="label">Firmware</div><div class="value" id="sysFw">—</div></div>
+        <div class="item"><div class="label">IP address</div><div class="value" id="sysIp">—</div></div>
+        <div class="item"><div class="label">Free heap</div><div class="value" id="sysHeap">—</div></div>
+        <div class="item"><div class="label">Link</div><div class="value" id="sysLink">—</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CONFIGURATION -->
+  <section id="tab-config" class="tab">
+    <form class="card" id="configForm">
+      <h2>Radio settings</h2>
+      <div class="row">
+        <div class="field">
+          <label for="callsign">Callsign</label>
+          <input type="text" id="callsign" maxlength="6">
+          <div class="hint">Up to 6 characters. Display/reporting only — not transmitted automatically.</div>
+        </div>
+        <div class="field">
+          <label for="baudRate">Baud rate</label>
+          <select id="baudRate">
+            <option value="45.45">45.45</option>
+            <option value="50">50</option>
+            <option value="75">75</option>
+          </select>
+          <div class="hint">Standard RTTY keying speeds.</div>
+        </div>
+        <div class="field">
+          <label for="polarity">FSK polarity</label>
+          <select id="polarity">
+            <option value="markHigh">Mark = HIGH</option>
+            <option value="markLow">Mark = LOW</option>
+          </select>
+          <div class="hint">Set to match your transmitter's FSK input.</div>
+        </div>
+      </div>
+
+      <h2>PTT / PA sequencing</h2>
+      <div class="row">
+        <div class="field">
+          <label for="pttLeadMs">PTT lead (ms)</label>
+          <input type="number" id="pttLeadMs" min="0" max="9999">
+          <div class="hint">Time the main relay is keyed before the first start bit. 0–9999ms.</div>
+        </div>
+        <div class="field">
+          <label for="pttTailMs">PTT tail (ms)</label>
+          <input type="number" id="pttTailMs" min="0" max="9999">
+          <div class="hint">Time the main relay stays keyed after the last stop bit. 0–9999ms.</div>
+        </div>
+        <div class="field">
+          <label for="paLeadMs">PA lead (ms)</label>
+          <input type="number" id="paLeadMs" min="0" max="9999">
+          <div class="hint">Amplifier-stage relay lead, before the main relay engages. 0–9999ms.</div>
+        </div>
+        <div class="field">
+          <label for="paTailMs">PA tail (ms)</label>
+          <input type="number" id="paTailMs" min="0" max="9999">
+          <div class="hint">Amplifier-stage relay tail, after the main relay releases. 0–9999ms.</div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label><input type="checkbox" id="liveLcdText">Show live TX text on the status LCD</label>
+        <div class="hint">Disable only if you notice this affecting timing on very slow displays.</div>
+      </div>
+
+      <h2>Network</h2>
+      <div class="row">
+        <div class="field">
+          <label for="hostname">Hostname</label>
+          <input type="text" id="hostname" maxlength="31">
+          <div class="hint">Letters, digits and hyphens only.</div>
+        </div>
+        <div class="field">
+          <label><input type="checkbox" id="dhcp">Use DHCP</label>
+          <div class="hint">Uncheck to set a static IP address below.</div>
+        </div>
+      </div>
+      <div class="row" id="staticFields">
+        <div class="field">
+          <label for="staticIp">IP address</label>
+          <input type="text" id="staticIp">
+        </div>
+        <div class="field">
+          <label for="gateway">Gateway</label>
+          <input type="text" id="gateway">
+        </div>
+        <div class="field">
+          <label for="subnet">Subnet mask</label>
+          <input type="text" id="subnet">
+        </div>
+        <div class="field">
+          <label for="dns">DNS server</label>
+          <input type="text" id="dns">
+        </div>
+      </div>
+
+      <div class="actions">
+        <button type="submit" class="primary">Save configuration</button>
+      </div>
+      <div class="msg" id="configMsg"></div>
+    </form>
+  </section>
+
+  <!-- SEND -->
+  <section id="tab-send" class="tab">
+    <div class="card">
+      <h2>Manual transmit</h2>
+      <div class="field">
+        <label for="sendText">Text to send</label>
+        <input type="text" id="sendText" placeholder="CQ CQ DE ...">
+        <div class="hint">
+          If idle, Send keys up, sends this text, then automatically unkeys.
+          If already transmitting, this text is appended to the buffer.
+        </div>
+      </div>
+      <div class="actions">
+        <button class="primary" id="btnSend">Send</button>
+        <button class="secondary" id="btnEnd">End (buffered)</button>
+        <button class="secondary danger" id="btnAbort">Abort</button>
+      </div>
+      <div class="hint" style="margin-top:.9rem;">
+        End finishes the current buffer, then unkeys. Abort clears the buffer and
+        unkeys immediately (still respects the PA/PTT tail timing above).
+      </div>
+      <div class="msg" id="sendMsg"></div>
+    </div>
+  </section>
+
+  <!-- BACKUP -->
+  <section id="tab-backup" class="tab">
+    <div class="card">
+      <h2>Backup configuration</h2>
+      <p class="hint">Download the current configuration as a JSON file.</p>
+      <div class="actions">
+        <button class="secondary" id="btnDownload">Download config.json</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Restore configuration</h2>
+      <p class="hint">Upload a previously downloaded config.json to restore it. This replaces all current settings.</p>
+      <div class="field">
+        <input type="file" id="restoreFile" accept="application/json">
+      </div>
+      <div class="actions">
+        <button class="primary" id="btnRestore">Restore</button>
+      </div>
+      <div class="msg" id="restoreMsg"></div>
+    </div>
+  </section>
+
+</main>
+
+<script>
+(function () {
+  'use strict';
+
+  // ---- theme ----
+  var themeKey = 'easyfsk-theme';
+  function applyTheme(t) {
+    if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+    else document.documentElement.removeAttribute('data-theme');
+  }
+  var savedTheme = localStorage.getItem(themeKey);
+  if (savedTheme) applyTheme(savedTheme);
+  document.getElementById('themeToggle').addEventListener('click', function () {
+    var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    var next = isDark ? 'light' : 'dark';
+    applyTheme(next);
+    localStorage.setItem(themeKey, next);
+  });
+
+  // ---- tabs ----
+  document.querySelectorAll('nav button').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      document.querySelectorAll('nav button').forEach(function (b) { b.classList.remove('active'); });
+      document.querySelectorAll('.tab').forEach(function (t) { t.classList.remove('active'); });
+      btn.classList.add('active');
+      document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    });
+  });
+
+  // ---- helpers ----
+  function showMsg(el, text, ok) {
+    el.textContent = text;
+    el.className = 'msg ' + (ok ? 'ok' : 'bad');
+  }
+
+  // ---- config load/save ----
+  var dhcpCheckbox = document.getElementById('dhcp');
+  var staticFields = document.getElementById('staticFields');
+  function updateStaticFieldsVisibility() {
+    staticFields.style.display = dhcpCheckbox.checked ? 'none' : 'flex';
+  }
+  dhcpCheckbox.addEventListener('change', updateStaticFieldsVisibility);
+
+  function fillConfigForm(cfg) {
+    document.getElementById('callsign').value = cfg.callsign || '';
+    document.getElementById('baudRate').value = String(cfg.baudRate);
+    document.getElementById('polarity').value = cfg.polarity;
+    document.getElementById('pttLeadMs').value = cfg.pttLeadMs;
+    document.getElementById('pttTailMs').value = cfg.pttTailMs;
+    document.getElementById('paLeadMs').value = cfg.paLeadMs;
+    document.getElementById('paTailMs').value = cfg.paTailMs;
+    document.getElementById('liveLcdText').checked = !!cfg.liveLcdText;
+    var net = cfg.network || {};
+    document.getElementById('hostname').value = net.hostname || '';
+    dhcpCheckbox.checked = !!net.dhcp;
+    document.getElementById('staticIp').value = net.staticIp || '';
+    document.getElementById('gateway').value = net.gateway || '';
+    document.getElementById('subnet').value = net.subnet || '';
+    document.getElementById('dns').value = net.dns || '';
+    updateStaticFieldsVisibility();
+    document.getElementById('stCallsign').textContent = cfg.callsign || '(not set)';
+  }
+
+  function loadConfig() {
+    fetch('/api/config').then(function (r) { return r.json(); }).then(fillConfigForm);
+  }
+  loadConfig();
+
+  document.getElementById('configForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var body = {
+      callsign: document.getElementById('callsign').value,
+      baudRate: parseFloat(document.getElementById('baudRate').value),
+      polarity: document.getElementById('polarity').value,
+      pttLeadMs: parseInt(document.getElementById('pttLeadMs').value, 10),
+      pttTailMs: parseInt(document.getElementById('pttTailMs').value, 10),
+      paLeadMs: parseInt(document.getElementById('paLeadMs').value, 10),
+      paTailMs: parseInt(document.getElementById('paTailMs').value, 10),
+      liveLcdText: document.getElementById('liveLcdText').checked,
+      network: {
+        hostname: document.getElementById('hostname').value,
+        dhcp: dhcpCheckbox.checked,
+        staticIp: document.getElementById('staticIp').value,
+        gateway: document.getElementById('gateway').value,
+        subnet: document.getElementById('subnet').value,
+        dns: document.getElementById('dns').value
+      }
+    };
+    var msgEl = document.getElementById('configMsg');
+    fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function (r) { return r.json(); }).then(function (data) {
+      if (data.ok) {
+        showMsg(msgEl, 'Saved.', true);
+        fillConfigForm(data.config);
+      } else if (data.deferred) {
+        showMsg(msgEl, data.message || 'Will save once TX ends.', false);
+      } else {
+        var parts = [];
+        if (data.errors) {
+          for (var k in data.errors) parts.push(k + ': ' + data.errors[k]);
+        }
+        showMsg(msgEl, parts.join('; ') || 'Could not save.', false);
+      }
+    }).catch(function () { showMsg(msgEl, 'Request failed.', false); });
+  });
+
+  // ---- send / end / abort ----
+  document.getElementById('btnSend').addEventListener('click', function () {
+    var text = document.getElementById('sendText').value;
+    var msgEl = document.getElementById('sendMsg');
+    fetch('/api/tx/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text })
+    }).then(function (r) { return r.json(); }).then(function (data) {
+      if (data.ok) { showMsg(msgEl, 'Sent.', true); document.getElementById('sendText').value = ''; }
+      else showMsg(msgEl, 'Not sent: ' + (data.reason || 'unknown reason'), false);
+    }).catch(function () { showMsg(msgEl, 'Request failed.', false); });
+  });
+  document.getElementById('btnEnd').addEventListener('click', function () {
+    fetch('/api/tx/end', { method: 'POST' });
+  });
+  document.getElementById('btnAbort').addEventListener('click', function () {
+    fetch('/api/tx/abort', { method: 'POST' });
+  });
+
+  // ---- backup / restore ----
+  document.getElementById('btnDownload').addEventListener('click', function () {
+    window.location = '/api/config/backup';
+  });
+  document.getElementById('btnRestore').addEventListener('click', function () {
+    var fileInput = document.getElementById('restoreFile');
+    var msgEl = document.getElementById('restoreMsg');
+    if (!fileInput.files.length) { showMsg(msgEl, 'Choose a file first.', false); return; }
+    var reader = new FileReader();
+    reader.onload = function () {
+      var parsed;
+      try { parsed = JSON.parse(reader.result); } catch (e) {
+        showMsg(msgEl, 'Not valid JSON.', false); return;
+      }
+      fetch('/api/config/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(parsed)
+      }).then(function (r) { return r.json(); }).then(function (data) {
+        if (data.ok) { showMsg(msgEl, 'Restored.', true); fillConfigForm(data.config); loadConfig(); }
+        else showMsg(msgEl, data.message || 'Restore failed.', false);
+      }).catch(function () { showMsg(msgEl, 'Request failed.', false); });
+    };
+    reader.readAsText(fileInput.files[0]);
+  });
+
+  // ---- system info (one-shot, refreshed occasionally) ----
+  function loadSystem() {
+    fetch('/api/system').then(function (r) { return r.json(); }).then(function (s) {
+      document.getElementById('sysFw').textContent = s.firmware || '—';
+      document.getElementById('sysIp').textContent = s.ip || '—';
+      document.getElementById('sysHeap').textContent = s.heapFree ? (Math.round(s.heapFree / 1024) + ' KB') : '—';
+      document.getElementById('sysLink').textContent = s.linkUp ? 'up' : 'down';
+    }).catch(function () {});
+  }
+  loadSystem();
+  setInterval(loadSystem, 10000);
+
+  // ---- WebSocket status feed, with reconnect/backoff ----
+  var connDot = document.getElementById('connDot');
+  var connText = document.getElementById('connText');
+  var backoffMs = 1000;
+  var heartbeatTimer = null;
+
+  function setConnected(connected) {
+    connDot.classList.toggle('connected', connected);
+    connText.textContent = connected ? 'connected' : 'reconnecting…';
+  }
+
+  function armHeartbeatWatchdog() {
+    if (heartbeatTimer) clearTimeout(heartbeatTimer);
+    heartbeatTimer = setTimeout(function () { setConnected(false); }, 5000);
+  }
+
+  function applyStatus(s) {
+    document.getElementById('stState').textContent = s.state === 'tx' ? 'TX' : (s.inhibited ? 'INHIBIT' : 'RX');
+    document.getElementById('stSource').textContent = (s.pttSource || '—').toUpperCase();
+    document.getElementById('stBuffer').textContent = s.bufferPending != null ? s.bufferPending : 0;
+    if (s.callsign) document.getElementById('stCallsign').textContent = s.callsign;
+    if (s.char) {
+      var el = document.getElementById('stLiveText');
+      if (s.state !== 'tx' && el.dataset.wasTx === '1') { el.textContent = ''; }
+      el.textContent += s.char;
+      el.dataset.wasTx = (s.state === 'tx') ? '1' : '0';
+      el.scrollTop = el.scrollHeight;
+    }
+    if (s.state !== 'tx') {
+      document.getElementById('stLiveText').dataset.wasTx = '0';
+    }
+  }
+
+  function connectWs() {
+    var proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+    var ws = new WebSocket(proto + location.host + '/ws');
+    ws.onopen = function () {
+      setConnected(true);
+      backoffMs = 1000;
+      armHeartbeatWatchdog();
+    };
+    ws.onmessage = function (evt) {
+      armHeartbeatWatchdog();
+      setConnected(true);
+      var data;
+      try { data = JSON.parse(evt.data); } catch (e) { return; }
+      if (data.type === 'status') applyStatus(data);
+      else if (data.type === 'heartbeat') {
+        document.getElementById('sysHeap').textContent = Math.round(data.heapFree / 1024) + ' KB';
+        document.getElementById('sysLink').textContent = data.linkUp ? 'up' : 'down';
+      }
+    };
+    ws.onclose = function () {
+      setConnected(false);
+      setTimeout(connectWs, backoffMs);
+      backoffMs = Math.min(backoffMs * 2, 15000);
+    };
+    ws.onerror = function () { ws.close(); };
+  }
+  connectWs();
+})();
+</script>
+</body>
+</html>
