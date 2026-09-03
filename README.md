@@ -19,6 +19,17 @@ AVR logic (see comments throughout the source referencing
 `TinyFSK_ZAW_01.cpp`), restructured only where the ESP32 architecture
 required it (see "What's different from the AVR original" below).
 
+See [`docs/design-decisions.md`](docs/design-decisions.md) for the full,
+running design log — including several **planned features not yet
+implemented in this code** (RTTY tuning indicator + spectrum waterfall,
+signal-quality meter, RX/TX audio level digipot trim via the rotary
+encoder, a 9-LED tuning bargraph, an RTTY receive decoder, and CW keying
+via Winkey protocol emulation). Some of these imply GPIO reassignments
+(e.g. `ON_PIN` removed, `LED_RX_PIN` moving to an MCP23017 I2C expander,
+GPIO2/GPIO14 repurposed for the encoder) that are **decided in the doc
+but not yet applied to `Pins.h`/this codebase** — the GPIO table below
+reflects the code as it stands today, not the doc's latest plan.
+
 ## Hardware
 
 - Board: Impero32 (ESP32-WROOM-32U, no PSRAM, onboard LAN8720A RMII PHY).
