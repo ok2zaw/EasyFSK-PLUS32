@@ -45,6 +45,7 @@ const char *lookupPattern(uint8_t asciiByte) {
 // --- CwBuffer ----------------------------------------------------------------
 
 void CwBuffer::reset() {
+  cancelBufferedSpeed(); // a buffered speed belongs to the content being dropped
   head_ = 0;
   count_ = 0;
   mergeCountdown_ = 0;
@@ -102,24 +103,30 @@ bool CwBuffer::addSideEffect(SideEffect effect, uint8_t value) {
   return true;
 }
 
-bool CwBuffer::addCancelBufferedSpeed() {
-  // Winkey 0x1E ("cancel buffered speed change, restore previous"). This
-  // implementation applies 0x1C speed changes immediately to speedWpm_
-  // rather than keeping a separate "temporary buffered speed" shadow value,
-  // so there is no distinct "previous" speed to restore to beyond whatever
-  // is already current -- accepted for protocol compatibility (the parser
-  // never desyncs), but a no-op. TODO if a host is found that relies on the
-  // true restore-previous-speed semantics.
-  return true;
-}
-
 bool CwBuffer::addBufferedSpeed(uint8_t wpm) {
   // A genuinely BUFFERED speed change (0x1C) takes effect only once the CW
   // engine reaches this point in playback, unlike the immediate 0x02
-  // command (WinkeyEmulator calls setSpeedWpm() directly for that one).
-  // Modeled as a side effect so it takes its turn in order; TxManager's
-  // consumer calls setSpeedWpm(value) when it pops SideEffect::BufferedSpeed.
+  // command. Modeled as a side effect so it takes its turn in order;
+  // TxManager's consumer calls applyBufferedSpeed(value) when it pops it.
   return addSideEffect(SideEffect::BufferedSpeed, wpm);
+}
+
+bool CwBuffer::addCancelBufferedSpeed() {
+  // Winkey 0x1E ("cancel buffered speed change, restore previous") -- also
+  // buffered, so text queued ahead of it still goes out at the override.
+  return addSideEffect(SideEffect::CancelBufferedSpeed);
+}
+
+void CwBuffer::applyBufferedSpeed(uint8_t wpm) {
+  if (baseSpeedWpm_ == 0) baseSpeedWpm_ = speedWpm_; // nested 0x1C keeps the original base
+  applySpeed(wpm);
+}
+
+void CwBuffer::cancelBufferedSpeed() {
+  if (baseSpeedWpm_ == 0) return;
+  uint8_t base = baseSpeedWpm_;
+  baseSpeedWpm_ = 0;
+  applySpeed(base);
 }
 
 void CwBuffer::backspace() {
@@ -132,6 +139,13 @@ void CwBuffer::backspace() {
 }
 
 void CwBuffer::setSpeedWpm(uint8_t wpm) {
+  // An explicit immediate speed wins over a buffered override -- there is
+  // nothing left to restore once the host has set a new base speed.
+  baseSpeedWpm_ = 0;
+  applySpeed(wpm);
+}
+
+void CwBuffer::applySpeed(uint8_t wpm) {
   if (wpm < 5) wpm = 5;
   if (wpm > 99) wpm = 99;
   speedWpm_ = wpm;
@@ -139,6 +153,7 @@ void CwBuffer::setSpeedWpm(uint8_t wpm) {
 }
 
 void CwBuffer::setWeightingPct(uint8_t pct) {
+  cancelBufferedSpeed();
   if (pct < 10) pct = 10;
   if (pct > 90) pct = 90;
   weightingPct_ = pct;
@@ -146,11 +161,13 @@ void CwBuffer::setWeightingPct(uint8_t pct) {
 }
 
 void CwBuffer::setFarnsworthWpm(uint8_t wpm) {
+  cancelBufferedSpeed();
   farnsworthWpm_ = wpm;
   recomputeTiming();
 }
 
 void CwBuffer::setKeyCompMs(uint8_t ms) {
+  cancelBufferedSpeed();
   keyCompMs_ = ms;
   recomputeTiming();
 }

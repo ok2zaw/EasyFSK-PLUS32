@@ -94,7 +94,7 @@ firmware image.
 
 The build environment is pinned in `platformio.ini`: PlatformIO Espressif32
 7.1.3 with Arduino-ESP32 2.0.17 and exact library versions. The current verified
-release build uses 45,888 bytes of RAM (14.0%) and 970,345 bytes of its
+release build uses 45,904 bytes of RAM (14.0%) and 971,297 bytes of its
 1,966,080-byte application slot (49.4%). Hardware testing is still required.
 
 ## Configuration
@@ -132,6 +132,40 @@ see the design doc if this needs revisiting for your setup):
   `[text]`; if already transmitting, the text is appended to the buffer.
 - **Backup / Restore** — `config.json` download/upload.
 
+## UART2: FSK2 or Winkey CW
+
+UART2 (GPIO15 TX / GPIO36 RX) has two modes, selected by the `uart2Mode`
+setting:
+
+- **`fsk2`** — a second RTTY control input at 9600/8-N-1, with the same
+  `[` / `]` / `\` convention as the main serial link.
+- **`cw`** — K1EL **WinKey** host-protocol emulation at 1200/8-N-2. Logging
+  software configured for a WinKeyer keys CW on `FSK_PIN` (used as a plain
+  on/off key line), with the same PTT/PA lead-tail sequencing as RTTY.
+
+The emulator identifies itself as a **WK2 (revision 23)**. It supports:
+
+- Text buffering (128 bytes) with backspace, clear buffer, and prosign merging.
+- Speed, weighting, Farnsworth, key compensation, first-element extension, and
+  PTT lead/tail — set either individually or all at once via Load Defaults.
+- Buffered commands: PTT on/off, timed key-down, wait, NOP, and buffered speed
+  change/cancel. Cancel restores the speed in force before the change.
+- Key Immediate (tune carrier).
+- Status reporting: BUSY and XOFF bits, sent both on request and unsolicited
+  whenever the status changes while the host port is open.
+
+Clear Buffer also stops the character currently being keyed, so a logger's
+Esc key stops TX immediately.
+
+Commands with no hardware equivalent on this board are accepted with the
+correct parameter byte count, so the host's command stream stays in sync, but
+are otherwise ignored: sidetone, speed pot, paddle, HSCW, dit/dah ratio, pin
+config, buffer-pointer editing, and standalone messages. Get Values and Dump
+EEPROM return zero-filled replies of the correct length. WK3-only admin
+commands are tolerated the same way, but 9600-baud Winkey mode and serial echo
+of sent characters are not implemented. None of this has yet been tested
+against real logging software.
+
 ## What's different from the AVR original
 
 The FSK/PTT timing *behavior* is preserved (same Baudot engine, same
@@ -154,9 +188,10 @@ improvement:
 - **Config storage is LittleFS + JSON** (`/config.json`), not raw EEPROM
   byte addressing — this is also what the web UI's config and
   backup/restore endpoints read and write directly.
-- **A `TxManager` task arbitrates three TX sources** (serial, the
-  hardware RTS-style input, and the web Send button) through one command
-  queue — the AVR original only ever had one (serial), so this
+- **A `TxManager` task arbitrates all TX sources** (serial, UART2 in
+  FSK2 or Winkey CW mode, the hardware RTS-style input, and the web Send
+  button) through one command queue, allowing only one transmission at a
+  time — the AVR original only ever had one (serial), so this
   concurrency didn't exist there.
 - **Flash writes are refused while a transmission is active** (`ConfigStore::applyAndSave`),
   extending the AVR's existing "no I2C on the bit-timing critical path"

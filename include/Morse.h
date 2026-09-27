@@ -45,7 +45,7 @@ struct Run {
 // item is a side effect, not a Run" signal (peekKind()) so the caller
 // (TxManager) can let CwTimer fully drain before executing one, preserving
 // order without needing the ISR/ring layer to know about them at all.
-enum class SideEffect : uint8_t { PttOn, PttOff, Wait, Nop, BufferedSpeed, KeyBuffered };
+enum class SideEffect : uint8_t { PttOn, PttOff, Wait, Nop, BufferedSpeed, KeyBuffered, CancelBufferedSpeed };
 
 enum class NextKind : uint8_t {
   None,       // buffer (and any character mid-expansion) is truly empty
@@ -68,8 +68,8 @@ public:
   bool addMergeMark();
 
   bool addSideEffect(SideEffect effect, uint8_t value = 0); // value: Wait's seconds count
-  bool addCancelBufferedSpeed(); // Winkey 0x1E: relaxed to a no-op below -- see .cpp
-  bool addBufferedSpeed(uint8_t wpm);
+  bool addBufferedSpeed(uint8_t wpm);   // Winkey 0x1C
+  bool addCancelBufferedSpeed();        // Winkey 0x1E
 
   size_t pending() const { return count_; }
   bool full() const { return count_ >= BUFFER_SIZE; }
@@ -80,10 +80,18 @@ public:
   bool nextElementRun(Run &out);           // valid only when peekKind() == Element
   SideEffect takeSideEffect(uint8_t &value); // valid only when peekKind() == SideEffect
 
+  // Executed by the consumer when it reaches a BufferedSpeed /
+  // CancelBufferedSpeed side effect. A buffered speed is a temporary
+  // override: the speed in force before the FIRST one is remembered and
+  // restored by cancelBufferedSpeed(), by reset() (Clear Buffer, abort,
+  // end of session), or superseded by an immediate setSpeedWpm().
+  void applyBufferedSpeed(uint8_t wpm);
+  void cancelBufferedSpeed();
+
   // --- live timing parameters, applied to runs generated AFTER the call
   // (an in-flight character finishes at its old timing, matching the
   // Winkey spec's "changes apply to the next character" behavior) ---
-  void setSpeedWpm(uint8_t wpm);          // 5-99
+  void setSpeedWpm(uint8_t wpm);          // 5-99; also ends any buffered-speed override
   void setWeightingPct(uint8_t pct);      // 10-90, 50 = normal
   void setFarnsworthWpm(uint8_t wpm);     // 0 = disabled (use setSpeedWpm timing throughout)
   void setKeyCompMs(uint8_t ms);          // 0-250
@@ -107,6 +115,8 @@ private:
   // Timing parameters (ms), recomputed by recomputeTiming() whenever any
   // setter above is called.
   uint8_t speedWpm_ = 20;
+  uint8_t baseSpeedWpm_ = 0; // speed to restore after a buffered override; 0 = no override active
+  void applySpeed(uint8_t wpm);
   uint8_t weightingPct_ = 50;
   uint8_t farnsworthWpm_ = 0;
   uint8_t keyCompMs_ = 0;

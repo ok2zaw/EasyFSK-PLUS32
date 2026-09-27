@@ -29,8 +29,8 @@ future work can continue without reconstructing the plan from conversation.
 - [x] Obtain a clean firmware build and record the resulting resource usage.
 - [x] Keep the toolchain versions documented.
 
-Verified 2026-09-28: `pio run` succeeds. The current release build uses 45,888
-bytes of RAM (14.0%) and 970,345 bytes of the 1,966,080-byte application slot
+Verified 2026-09-28: `pio run` succeeds. The current release build uses 45,904
+bytes of RAM (14.0%) and 971,297 bytes of the 1,966,080-byte application slot
 (49.4%).
 
 ### 2. Minimum RTTY firmware
@@ -91,7 +91,7 @@ disturb an active transmission.
 - Implement physical mode routing through MCP23017 and replace the
   `ModeSelect` stub.
 
-Host-test update 2026-09-28: 72 tests pass across the native, native-Winkey,
+Host-test update 2026-09-28: 91 tests pass across the native, native-Winkey,
 native-config, and native-config-store environments. The new Morse tests also
 fixed complete word-gap timing, terminal generator-state reporting, and timing
 changes that previously could split an in-flight character between old and new
@@ -108,7 +108,11 @@ and that network-restart/storage-error messages remain visible. Configuration
 validation now rejects wrong JSON types and hostnames that start or end with a
 hyphen. The shared HTTP configuration-response builder is tested for deferred
 updates, per-field validation errors, persistence failures, and their status
-codes.
+codes; the POST controller is exercised through the real ConfigStore and owns
+all returned JSON strings safely. Expanded Winkey coverage verifies Load
+Defaults, unsolicited status changes, WK3-command parser synchronization,
+buffer-pointer operands, Clear Buffer semantics, and temporary buffered-speed
+restoration/cancellation.
 
 Completion criterion: both UART2 modes pass host and timing tests, and the
 physical routing output always agrees with the selected mode.

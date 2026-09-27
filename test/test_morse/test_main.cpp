@@ -195,6 +195,85 @@ void test_buffered_speed_is_exposed_as_ordered_side_effect() {
   TEST_ASSERT_EQUAL_UINT8(35, value);
 }
 
+void test_cancel_buffered_speed_is_an_ordered_side_effect() {
+  Morse::CwBuffer buffer;
+  buffer.reset();
+  TEST_ASSERT_TRUE(buffer.addChar('E'));
+  TEST_ASSERT_TRUE(buffer.addCancelBufferedSpeed());
+
+  assertRun(nextRun(buffer), true, 60, 'E');
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Morse::NextKind::SideEffect),
+                          static_cast<uint8_t>(buffer.peekKind()));
+  uint8_t value = 0;
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<uint8_t>(Morse::SideEffect::CancelBufferedSpeed),
+      static_cast<uint8_t>(buffer.takeSideEffect(value)));
+}
+
+void test_cancel_buffered_speed_restores_previous_speed() {
+  Morse::CwBuffer buffer;
+  buffer.reset();
+  buffer.setSpeedWpm(20);
+  buffer.applyBufferedSpeed(40);
+  buffer.applyBufferedSpeed(30); // nested change keeps the original base
+  TEST_ASSERT_TRUE(buffer.addChar('E'));
+  assertRun(nextRun(buffer), true, 40, 'E'); // 1200 / 30
+
+  buffer.cancelBufferedSpeed();
+  TEST_ASSERT_TRUE(buffer.addChar('E'));
+  assertRun(nextRun(buffer), false, 180, 0);
+  assertRun(nextRun(buffer), true, 60, 'E'); // back to 20 WPM
+}
+
+void test_reset_ends_buffered_speed_override() {
+  Morse::CwBuffer buffer;
+  buffer.reset();
+  buffer.setSpeedWpm(20);
+  buffer.applyBufferedSpeed(40);
+  buffer.reset(); // Clear Buffer / abort / end of session
+  TEST_ASSERT_TRUE(buffer.addChar('E'));
+  assertRun(nextRun(buffer), true, 60, 'E');
+}
+
+void test_immediate_speed_supersedes_buffered_override() {
+  Morse::CwBuffer buffer;
+  buffer.reset();
+  buffer.setSpeedWpm(20);
+  buffer.applyBufferedSpeed(40);
+  buffer.setSpeedWpm(25);
+  buffer.cancelBufferedSpeed(); // nothing left to restore
+  TEST_ASSERT_TRUE(buffer.addChar('E'));
+  assertRun(nextRun(buffer), true, 48, 'E'); // 1200 / 25
+}
+
+void test_timing_changes_cancel_buffered_speed_override() {
+  Morse::CwBuffer buffer;
+
+  buffer.reset();
+  buffer.setSpeedWpm(20);
+  buffer.applyBufferedSpeed(40);
+  buffer.setWeightingPct(50);
+  buffer.cancelBufferedSpeed(); // already cancelled; must not change speed again
+  TEST_ASSERT_TRUE(buffer.addChar('E'));
+  assertRun(nextRun(buffer), true, 60, 'E');
+
+  buffer.reset();
+  buffer.setSpeedWpm(20);
+  buffer.applyBufferedSpeed(40);
+  buffer.setFarnsworthWpm(0);
+  buffer.cancelBufferedSpeed();
+  TEST_ASSERT_TRUE(buffer.addChar('E'));
+  assertRun(nextRun(buffer), true, 60, 'E');
+
+  buffer.reset();
+  buffer.setSpeedWpm(20);
+  buffer.applyBufferedSpeed(40);
+  buffer.setKeyCompMs(0);
+  buffer.cancelBufferedSpeed();
+  TEST_ASSERT_TRUE(buffer.addChar('E'));
+  assertRun(nextRun(buffer), true, 60, 'E');
+}
+
 void test_unsupported_character_is_skipped_without_losing_following_text() {
   Morse::CwBuffer buffer;
   buffer.reset();
@@ -220,6 +299,11 @@ int main(int, char **) {
   RUN_TEST(test_full_buffer_rejects_additional_items);
   RUN_TEST(test_side_effect_keeps_order_between_characters);
   RUN_TEST(test_buffered_speed_is_exposed_as_ordered_side_effect);
+  RUN_TEST(test_cancel_buffered_speed_is_an_ordered_side_effect);
+  RUN_TEST(test_cancel_buffered_speed_restores_previous_speed);
+  RUN_TEST(test_reset_ends_buffered_speed_override);
+  RUN_TEST(test_immediate_speed_supersedes_buffered_override);
+  RUN_TEST(test_timing_changes_cancel_buffered_speed_override);
   RUN_TEST(test_unsupported_character_is_skipped_without_losing_following_text);
   return UNITY_END();
 }

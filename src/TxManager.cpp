@@ -33,6 +33,8 @@ struct TxMsg {
   enum class Type : uint8_t {
     KeyUp, BufferedEnd, Abort, AppendByte, // RTTY/Baudot path
     CwAppendChar, CwMergeMark, CwSideEffect, CwBackspace, CwClearPending, CwTuneKey, // CW/Winkey path
+    CwSetSpeed, CwSetWeighting, CwSetFarnsworth, CwSetKeyComp, CwSetFirstExt,
+    CwCancelSpeed, // CW immediate timing
   } type;
   uint8_t byte;
   Source src;
@@ -242,6 +244,14 @@ void handleMessage(const TxMsg &msg, bool inhibitedNow) {
       break;
 
     case TxMsg::Type::CwSideEffect:
+      if (msg.cwEffect == Morse::SideEffect::CancelBufferedSpeed &&
+          s_cwBuffer.peekKind() == Morse::NextKind::None) {
+        // Nothing queued ahead of it (anything already in CwTimer's ring was
+        // generated at its own snapshot timing), so apply it now -- and
+        // don't open a PTT session just to restore a speed.
+        s_cwBuffer.cancelBufferedSpeed();
+        break;
+      }
       if (inhibitedNow) break;
       // Starts a session for a standalone side effect too (matters for
       // PttOn/PttOff, which are meant to control the relay independent of
@@ -260,7 +270,26 @@ void handleMessage(const TxMsg &msg, bool inhibitedNow) {
 
     case TxMsg::Type::CwClearPending:
       s_cwBuffer.reset();
+      s_tuneActive = false; // Clear Buffer also cancels Key Immediate / Tune.
+      if (s_state == State::Sending && isCwSource(s_activeSource)) {
+        // A real WinKey's Clear Buffer also cuts off the character being
+        // keyed (hosts map Esc to it). Drop CwTimer's lookahead ring and the
+        // Run in progress, key up, and leave the ISR running: pumpCwEngine()
+        // then sees an empty, idle engine and starts the normal tail
+        // sequence -- or keeps going if the host sends new text first.
+        CwTimer::setActive(false);
+        CwTimer::resetForNewTx();
+        CwTimer::holdKeyUp();
+        CwTimer::setActive(true);
+      }
       break;
+
+    case TxMsg::Type::CwSetSpeed: s_cwBuffer.setSpeedWpm(msg.byte); break;
+    case TxMsg::Type::CwSetWeighting: s_cwBuffer.setWeightingPct(msg.byte); break;
+    case TxMsg::Type::CwSetFarnsworth: s_cwBuffer.setFarnsworthWpm(msg.byte); break;
+    case TxMsg::Type::CwSetKeyComp: s_cwBuffer.setKeyCompMs(msg.byte); break;
+    case TxMsg::Type::CwSetFirstExt: s_cwBuffer.setFirstExtensionMs(msg.byte); break;
+    case TxMsg::Type::CwCancelSpeed: s_cwBuffer.cancelBufferedSpeed(); break;
 
     case TxMsg::Type::CwTuneKey:
       if (msg.byte != 0) {
@@ -313,7 +342,8 @@ void pumpCwEngine() {
       switch (effect) {
         case Morse::SideEffect::PttOn: setPttOutput(true); break;
         case Morse::SideEffect::PttOff: setPttOutput(false); break;
-        case Morse::SideEffect::BufferedSpeed: s_cwBuffer.setSpeedWpm(value); break;
+        case Morse::SideEffect::BufferedSpeed: s_cwBuffer.applyBufferedSpeed(value); break;
+        case Morse::SideEffect::CancelBufferedSpeed: s_cwBuffer.cancelBufferedSpeed(); break;
         case Morse::SideEffect::Wait: {
           // Coarse (0-99s) pause. capped at 60s to keep the ring's
           // uint16_t-millisecond duration field valid -- multi-second
@@ -602,7 +632,7 @@ void begin(const Config &cfg) {
 
 void applyConfig(const Config &cfg) {
   s_cfg = cfg;
-  s_cwBuffer.setSpeedWpm(cfg.cwSpeedWpm);
+  cwSetSpeedWpm(cfg.cwSpeedWpm);
 }
 
 bool enqueueKeyUp(Source src) {
@@ -665,13 +695,13 @@ bool cwEnqueueBufferedSpeed(uint8_t wpm) {
 void cwBackspace() {
   if (s_queue == nullptr) return;
   TxMsg m{TxMsg::Type::CwBackspace, 0, Source::Winkey, Morse::SideEffect::Nop};
-  xQueueSend(s_queue, &m, 0);
+  xQueueSend(s_queue, &m, pdMS_TO_TICKS(10));
 }
 
 void cwClearPendingBuffer() {
   if (s_queue == nullptr) return;
   TxMsg m{TxMsg::Type::CwClearPending, 0, Source::Winkey, Morse::SideEffect::Nop};
-  xQueueSend(s_queue, &m, 0);
+  xQueueSend(s_queue, &m, pdMS_TO_TICKS(10));
 }
 
 void cwSetPttLeadTail(uint16_t leadMs, uint16_t tailMs) {
@@ -682,24 +712,50 @@ void cwSetPttLeadTail(uint16_t leadMs, uint16_t tailMs) {
 void cwSetTuneKeyDown(bool down) {
   if (s_queue == nullptr) return;
   TxMsg m{TxMsg::Type::CwTuneKey, static_cast<uint8_t>(down ? 1 : 0), Source::Winkey, Morse::SideEffect::Nop};
-  xQueueSend(s_queue, &m, 0);
+  xQueueSend(s_queue, &m, pdMS_TO_TICKS(10));
 }
 
 uint16_t cwBufferPending() { return getStatus().bufferPending; }
 
-// The four timing setters below are called directly (not queued) since
-// they only ever affect characters generated in the future -- CwBuffer's
-// own setters already document "takes effect after the call", and reading
-// s_cwBuffer's timing fields is never done from the ISR, only from
-// TxManager's own task (pumpCwEngine()) and here, so there's no cross-task
-// hazard needing the queue's ordering guarantee. (Contrast with
-// cwEnqueueBufferedSpeed(), which is the intentionally-ordered/buffered
-// Winkey 0x1C command, not this immediate 0x02/0x03/0x0D/0x10/0x11 path.)
-void cwSetSpeedWpm(uint8_t wpm) { s_cwBuffer.setSpeedWpm(wpm); }
-void cwSetWeightingPct(uint8_t pct) { s_cwBuffer.setWeightingPct(pct); }
-void cwSetFarnsworthWpm(uint8_t wpm) { s_cwBuffer.setFarnsworthWpm(wpm); }
-void cwSetKeyCompMs(uint8_t ms) { s_cwBuffer.setKeyCompMs(ms); }
-void cwSetFirstExtensionMs(uint8_t ms) { s_cwBuffer.setFirstExtensionMs(ms); }
+bool cwEnqueueCancelBufferedSpeed() {
+  return cwEnqueueSideEffect(Morse::SideEffect::CancelBufferedSpeed);
+}
+
+// The immediate timing setters (Winkey 0x02/0x03/0x0D/0x10/0x11, plus the
+// config UI's speed) are routed through the queue rather than writing
+// s_cwBuffer directly: they're called from loop()/the web task, while
+// TxManager's own task reads -- and, for buffered speed changes, writes --
+// the same timing state from pumpCwEngine(). recomputeTiming() updates
+// several fields at once, so a direct cross-task write could be seen
+// half-done. "Immediate" still holds: the message is handled as soon as it
+// is dequeued, not when playback reaches it (contrast cwEnqueueBufferedSpeed()).
+// Before begin() has created the queue there's no task yet, so it's safe to
+// write directly.
+namespace {
+void setCwTiming(TxMsg::Type type, uint8_t value) {
+  if (s_queue != nullptr) {
+    TxMsg m{type, value, Source::Winkey, Morse::SideEffect::Nop};
+    xQueueSend(s_queue, &m, pdMS_TO_TICKS(10));
+    return;
+  }
+  switch (type) {
+    case TxMsg::Type::CwSetSpeed: s_cwBuffer.setSpeedWpm(value); break;
+    case TxMsg::Type::CwSetWeighting: s_cwBuffer.setWeightingPct(value); break;
+    case TxMsg::Type::CwSetFarnsworth: s_cwBuffer.setFarnsworthWpm(value); break;
+    case TxMsg::Type::CwSetKeyComp: s_cwBuffer.setKeyCompMs(value); break;
+    case TxMsg::Type::CwSetFirstExt: s_cwBuffer.setFirstExtensionMs(value); break;
+    case TxMsg::Type::CwCancelSpeed: s_cwBuffer.cancelBufferedSpeed(); break;
+    default: break;
+  }
+}
+} // namespace
+
+void cwSetSpeedWpm(uint8_t wpm) { setCwTiming(TxMsg::Type::CwSetSpeed, wpm); }
+void cwSetWeightingPct(uint8_t pct) { setCwTiming(TxMsg::Type::CwSetWeighting, pct); }
+void cwSetFarnsworthWpm(uint8_t wpm) { setCwTiming(TxMsg::Type::CwSetFarnsworth, wpm); }
+void cwSetKeyCompMs(uint8_t ms) { setCwTiming(TxMsg::Type::CwSetKeyComp, ms); }
+void cwSetFirstExtensionMs(uint8_t ms) { setCwTiming(TxMsg::Type::CwSetFirstExt, ms); }
+void cwCancelBufferedSpeedOverride() { setCwTiming(TxMsg::Type::CwCancelSpeed, 0); }
 
 Status getStatus() {
   Status copy;

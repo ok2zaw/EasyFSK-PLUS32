@@ -12,8 +12,8 @@
 // 8 data bits, 2 stop bits, no parity), the Admin sub-command table, and
 // the Immediate/Buffered command tables. A handful of corners with no
 // local-hardware equivalent on this board (paddle/pot-related commands,
-// HSCW, dit/dah ratio, pin config, the variable-length "pointer" buffer
-// command, and the exact byte layout of Get Values/Dump EEPROM's replies)
+// HSCW, dit/dah ratio, pin config, the "pointer" buffer-editing command,
+// and the exact byte layout of Get Values/Dump EEPROM's replies)
 // are ACCEPTED with the correct byte count -- so a real host's parser never
 // desyncs talking to this board -- but are not fully acted on. Each is
 // commented individually below; see also the design doc's "Not yet decided
@@ -73,10 +73,26 @@ constexpr uint8_t ADMIN_SET_WK2_MODE = 0x0B;
 constexpr uint8_t ADMIN_DUMP_EEPROM = 0x0C;
 constexpr uint8_t ADMIN_LOAD_EEPROM = 0x0D;
 constexpr uint8_t ADMIN_SEND_MSG = 0x0E;
+// WK3-era admin sub-codes. This emulator reports itself as a WK2 (see
+// WK_REVISION_BYTE), so a well-behaved host shouldn't send these, but the
+// ones with trailing parameter bytes or a reply are still accepted with the
+// right byte counts so a host that sends them anyway can't desync the
+// parser. Counts are from the WK3 datasheet's admin table -- not yet
+// bench-verified against real hardware.
+constexpr uint8_t ADMIN_LOAD_X1MODE = 0x0F;     // <nn>
+constexpr uint8_t ADMIN_SET_RTTY_REGS = 0x13;   // <p1><p2>
+constexpr uint8_t ADMIN_READ_VCC = 0x15;        // -> 1 byte
+constexpr uint8_t ADMIN_LOAD_X2MODE = 0x16;     // <nn>
+constexpr uint8_t ADMIN_GET_FW_MINOR = 0x17;    // -> 1 byte
+constexpr uint8_t ADMIN_GET_IC_TYPE = 0x18;     // -> 1 byte
+constexpr uint8_t ADMIN_SIDETONE_VOLUME = 0x19; // <nn>
 
-// Arbitrary but plausible single-byte "revision" reply to Host Open --
-// real hosts generally just check it's non-zero/sane, not a specific value.
-constexpr uint8_t WK_REVISION_BYTE = 0x21;
+// Host Open reply: firmware revision, decimal 23 = WK2 v2.3. Hosts DO key
+// feature selection off this value -- anything >= 30 is taken as a WK3 and
+// unlocks WK3-only commands this emulator doesn't implement -- so it must
+// stay in the WK2 range matching the command set actually emulated here.
+constexpr uint8_t WK_REVISION_BYTE = 23;
+constexpr uint8_t WK_MINOR_REVISION_BYTE = 3;
 
 // Sentinels for the generic param-collector's `s_pendingCmd` when the
 // pending command came from the ADMIN (0x00 <sub>) path rather than the
@@ -89,6 +105,21 @@ constexpr uint8_t WK_REVISION_BYTE = 0x21;
 // collide with a real command byte.
 constexpr uint8_t PENDING_ADMIN_LOAD_EEPROM = 0xD0;
 constexpr uint8_t PENDING_ADMIN_SEND_MSG = 0xD1;
+constexpr uint8_t PENDING_ADMIN_IGNORED = 0xD2; // WK3 admin payload, discarded
+constexpr uint8_t PENDING_POINTER_ARG = 0xD3;   // 0x16 sub-op's <nn> operand
+
+// Load Defaults (0x0F) payload layout, per the K1EL manual.
+constexpr uint8_t LOAD_DEFAULTS_COUNT = 15;
+constexpr uint8_t LD_SPEED = 1;
+constexpr uint8_t LD_WEIGHT = 3;
+constexpr uint8_t LD_LEAD_IN = 4;
+constexpr uint8_t LD_TAIL = 5;
+constexpr uint8_t LD_FIRST_EXT = 8;
+constexpr uint8_t LD_KEY_COMP = 9;
+constexpr uint8_t LD_FARNSWORTH = 10;
+// (0 mode register, 2 sidetone, 6 min WPM, 7 WPM range, 11 paddle
+// setpoint, 12 dit/dah ratio, 13 pin config, 14 pot range: no local
+// equivalent on this board -- same reasons as their individual commands.)
 
 // UART1's own TX_ON/TX_END/TX_ABORT convention, reused verbatim for UART2's
 // "fsk2" mode (SerialControl.cpp has the canonical copies of these).
@@ -106,9 +137,14 @@ bool s_wk2Mode = false;
 bool s_echoNextByte = false;
 uint8_t s_pendingCmd = 0;
 uint16_t s_paramsRemaining = 0;
-uint8_t s_paramBytes[2]; // only CMD_PTT_LEAD_TAIL needs both kept
+uint8_t s_paramBytes[LOAD_DEFAULTS_COUNT]; // largest payload actually used
 uint8_t s_paramsCollected = 0;
 bool s_pendingIsAdminSubCode = false;
+// Last status byte the host has seen (reply or unsolicited), -1 = none yet.
+// A real WinKey pushes a fresh status byte whenever it changes while the
+// host port is open; most logging software relies on that (BUSY/XOFF edges)
+// rather than polling with 0x15.
+int16_t s_lastReportedStatus = -1;
 
 void sendByte(uint8_t b) { Serial2.write(b); }
 
@@ -120,6 +156,7 @@ void resetWinkeyParser() {
   s_paramsRemaining = 0;
   s_paramsCollected = 0;
   s_pendingIsAdminSubCode = false;
+  s_lastReportedStatus = -1;
   TxManager::cwClearPendingBuffer();
 }
 
@@ -129,7 +166,7 @@ void beginParams(uint8_t cmd, uint16_t count) {
   s_paramsCollected = 0;
 }
 
-void handleRequestStatus() {
+uint8_t currentStatusByte() {
   // Status byte format (WK1-compatible; see the design doc's fetched
   // summary): bits 7-6 always 0b11, bit4 WAIT, bit3 KEYDOWN(tune)/
   // WK2-pushbutton-flag, bit2 BUSY, bit1 BREAKIN, bit0 XOFF.
@@ -145,7 +182,24 @@ void handleRequestStatus() {
   // modeled: no pushbutton exists to report (see the design doc's encoder
   // section -- the encoder pushbutton, once built, is a mode-cycle/
   // long-press control, not a Winkey-reportable paddle-adjacent button).
+  return statusByte;
+}
+
+void sendStatus(uint8_t statusByte) {
   sendByte(statusByte);
+  s_lastReportedStatus = statusByte;
+}
+
+void handleRequestStatus() { sendStatus(currentStatusByte()); }
+
+// Pushes an unsolicited status byte on any change while the host is open.
+// Only called between complete commands (never mid-parameter or while an
+// admin sub-code/echo byte is pending), so it can't split a multi-byte
+// reply or be mistaken for one.
+void reportStatusChange() {
+  if (!s_hostOpen || s_paramsRemaining > 0 || s_pendingIsAdminSubCode || s_echoNextByte) return;
+  uint8_t statusByte = currentStatusByte();
+  if (statusByte != s_lastReportedStatus) sendStatus(statusByte);
 }
 
 void handleGetSpeedPot() {
@@ -172,6 +226,9 @@ void handleAdminSub(uint8_t sub) {
     case ADMIN_OPEN:
       s_hostOpen = true;
       sendByte(WK_REVISION_BYTE);
+      // Baseline, not a report: the host expects exactly the revision byte
+      // here, and only CHANGES from this point on are pushed to it.
+      s_lastReportedStatus = currentStatusByte();
       break;
     case ADMIN_CLOSE:
       s_hostOpen = false;
@@ -215,6 +272,21 @@ void handleAdminSub(uint8_t sub) {
     case ADMIN_SEND_MSG:
       beginParams(PENDING_ADMIN_SEND_MSG, 1); // <msg_number> -- no stored messages in this implementation
       break;
+    case ADMIN_LOAD_X1MODE:
+    case ADMIN_LOAD_X2MODE:
+    case ADMIN_SIDETONE_VOLUME:
+      beginParams(PENDING_ADMIN_IGNORED, 1);
+      break;
+    case ADMIN_SET_RTTY_REGS:
+      beginParams(PENDING_ADMIN_IGNORED, 2);
+      break;
+    case ADMIN_READ_VCC:
+    case ADMIN_GET_IC_TYPE:
+      sendByte(0x00); // "unsupported, returns 0", same as the A2D queries
+      break;
+    case ADMIN_GET_FW_MINOR:
+      sendByte(WK_MINOR_REVISION_BYTE);
+      break;
     default:
       // Unrecognized admin sub-code: no extra parameter bytes assumed. If
       // a real host uses an admin sub-command not in the table above with
@@ -224,8 +296,25 @@ void handleAdminSub(uint8_t sub) {
   }
 }
 
+void applyLoadDefaults(const uint8_t *p) {
+  if (p[LD_SPEED] != 0) TxManager::cwSetSpeedWpm(p[LD_SPEED]); // 0 = pot, same as 0x02
+  TxManager::cwSetWeightingPct(p[LD_WEIGHT]);
+  TxManager::cwSetPttLeadTail(static_cast<uint16_t>(p[LD_LEAD_IN]) * 10,
+                              static_cast<uint16_t>(p[LD_TAIL]) * 10);
+  TxManager::cwSetFirstExtensionMs(p[LD_FIRST_EXT]);
+  TxManager::cwSetKeyCompMs(p[LD_KEY_COMP]);
+  TxManager::cwSetFarnsworthWpm(p[LD_FARNSWORTH]);
+}
+
 void onParamsComplete(uint8_t cmd, uint8_t finalByte) {
   switch (cmd) {
+    case CMD_PTT_LEAD_TAIL:
+      TxManager::cwSetPttLeadTail(static_cast<uint16_t>(s_paramBytes[0]) * 10,
+                                  static_cast<uint16_t>(s_paramBytes[1]) * 10);
+      break;
+    case CMD_LOAD_DEFAULTS:
+      applyLoadDefaults(s_paramBytes);
+      break;
     case CMD_SIDETONE:
       break; // no local sidetone (design doc, 2026-09-03: "user's choice") -- accepted, ignored
     case CMD_SET_SPEED:
@@ -261,6 +350,7 @@ void onParamsComplete(uint8_t cmd, uint8_t finalByte) {
       // mostly inert here -- this board has no local paddle or iambic
       // keyer state machine (design doc: "pure host-driven keying"), which
       // is what most of this register's bits actually configure.
+      TxManager::cwCancelBufferedSpeedOverride();
       break;
     case CMD_SET_FIRST_EXT:
       TxManager::cwSetFirstExtensionMs(finalByte);
@@ -273,14 +363,20 @@ void onParamsComplete(uint8_t cmd, uint8_t finalByte) {
     case CMD_SOFTWARE_PADDLE:
       break; // no local paddle -- discard
     case CMD_POINTER:
-      // KNOWN LIMITATION: the real Winkey buffer-"pointer" command's
-      // payload is variable-length; only its one sub-op byte is consumed
-      // here. A host that actually uses buffer-pointer manipulation (rare
-      // -- most logging software just streams text) could desync after
-      // this command. Flagged in the design doc; revisit if observed.
+      // Buffer-pointer editing isn't implemented (most logging software
+      // just streams text), but the payload length is: sub-op 00 (reset
+      // pointers) stands alone, while 01/02 (move input pointer, overwrite/
+      // append) and 03 (insert N nulls) each carry one <nn> operand. Counts
+      // per the K1EL manual -- not yet bench-verified.
+      if (finalByte != 0x00) beginParams(PENDING_POINTER_ARG, 1);
       break;
+    case PENDING_POINTER_ARG:
+      break; // operand discarded, see CMD_POINTER
     case CMD_SET_RATIO:
-      break; // dit/dah ratio deviation not implemented -- discard
+      // The ratio itself is not implemented, but the WK2 protocol specifies
+      // that any immediate ratio change cancels a buffered speed override.
+      TxManager::cwCancelBufferedSpeedOverride();
+      break;
     case CMD_BUF_PTT:
       TxManager::cwEnqueueSideEffect(finalByte != 0 ? Morse::SideEffect::PttOn
                                                      : Morse::SideEffect::PttOff);
@@ -300,6 +396,8 @@ void onParamsComplete(uint8_t cmd, uint8_t finalByte) {
       break; // 256 bytes discarded, see handleAdminSub()
     case PENDING_ADMIN_SEND_MSG:
       break; // message number discarded -- no stored messages
+    case PENDING_ADMIN_IGNORED:
+      break; // WK3 admin payload discarded, see handleAdminSub()
     default:
       break;
   }
@@ -307,20 +405,15 @@ void onParamsComplete(uint8_t cmd, uint8_t finalByte) {
 
 void handleWinkeyByte(uint8_t b) {
   if (s_paramsRemaining > 0) {
-    if (s_pendingCmd == CMD_PTT_LEAD_TAIL && s_paramsCollected < 2) {
+    if (s_paramsCollected < sizeof(s_paramBytes)) {
       s_paramBytes[s_paramsCollected++] = b;
     }
     s_paramsRemaining--;
     if (s_paramsRemaining == 0) {
-      if (s_pendingCmd == CMD_PTT_LEAD_TAIL) {
-        uint16_t leadMs = static_cast<uint16_t>(s_paramBytes[0]) * 10;
-        uint16_t tailMs = static_cast<uint16_t>(s_paramBytes[1]) * 10;
-        TxManager::cwSetPttLeadTail(leadMs, tailMs);
-      } else {
-        onParamsComplete(s_pendingCmd, b);
-      }
+      uint8_t cmd = s_pendingCmd;
       s_pendingCmd = 0;
       s_paramsCollected = 0;
+      onParamsComplete(cmd, b); // may begin a follow-on operand (CMD_POINTER)
     }
     return;
   }
@@ -354,7 +447,7 @@ void handleWinkeyByte(uint8_t b) {
       case CMD_SET_HSCW: beginParams(b, 1); return;
       case CMD_SET_FARNSWORTH: beginParams(b, 1); return;
       case CMD_SET_WK2_MODE: beginParams(b, 1); return;
-      case CMD_LOAD_DEFAULTS: beginParams(b, 15); return;
+      case CMD_LOAD_DEFAULTS: beginParams(b, LOAD_DEFAULTS_COUNT); return;
       case CMD_SET_FIRST_EXT: beginParams(b, 1); return;
       case CMD_SET_KEY_COMP: beginParams(b, 1); return;
       case CMD_SET_PADDLE_SWITCHPOINT: beginParams(b, 1); return;
@@ -369,7 +462,7 @@ void handleWinkeyByte(uint8_t b) {
       case CMD_BUF_MERGE: TxManager::cwEnqueueMergeMark(); return;
       case CMD_BUF_SPEED: beginParams(b, 1); return;
       case CMD_BUF_HSCW: beginParams(b, 1); return;
-      case CMD_BUF_CANCEL_SPEED: return; // no-op -- see Morse::CwBuffer::addCancelBufferedSpeed()
+      case CMD_BUF_CANCEL_SPEED: TxManager::cwEnqueueCancelBufferedSpeed(); return;
       case CMD_BUF_NOP: TxManager::cwEnqueueSideEffect(Morse::SideEffect::Nop); return;
       default: return; // unreachable: every 0x00-0x1F value is handled above
     }
@@ -398,8 +491,8 @@ void pollFsk2() {
 }
 
 void pollCw() {
-  if (Serial2.available() <= 0) return;
-  handleWinkeyByte(Serial2.read());
+  if (Serial2.available() > 0) handleWinkeyByte(Serial2.read());
+  reportStatusChange();
 }
 
 void openSerial2ForMode(Uart2Mode mode) {

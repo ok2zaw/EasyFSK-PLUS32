@@ -17,6 +17,8 @@ struct MockTxManager {
   int clearCount = 0;
   int backspaceCount = 0;
   int mergeCount = 0;
+  int cancelSpeedCount = 0;
+  int immediateCancelSpeedCount = 0;
   int abortCount = 0;
   int bufferedEndCount = 0;
   int tuneKeyCallCount = 0;
@@ -54,7 +56,7 @@ void feed(std::initializer_list<uint8_t> values) {
 void openHost() {
   feed({0x00, 0x02});
   TEST_ASSERT_EQUAL_size_t(1, Serial2.tx.size());
-  TEST_ASSERT_EQUAL_HEX8(0x21, Serial2.tx[0]);
+  TEST_ASSERT_EQUAL_UINT8(23, Serial2.tx[0]); // WK2 v2.3
 }
 
 } // namespace
@@ -100,6 +102,13 @@ bool cwEnqueueBufferedSpeed(uint8_t wpm) {
   mock.bufferedSpeeds.push_back(wpm);
   return true;
 }
+
+bool cwEnqueueCancelBufferedSpeed() {
+  mock.cancelSpeedCount++;
+  return true;
+}
+
+void cwCancelBufferedSpeedOverride() { mock.immediateCancelSpeedCount++; }
 
 void cwBackspace() { mock.backspaceCount++; }
 void cwClearPendingBuffer() { mock.clearCount++; }
@@ -271,6 +280,139 @@ void test_admin_load_eeprom_consumes_all_payload_bytes() {
   TEST_ASSERT_EQUAL_UINT8('Z', mock.chars[0]);
 }
 
+void test_load_defaults_applies_supported_fields() {
+  feed({0x0F,
+        0x00, // mode register
+        28,   // speed
+        0x05, // sidetone
+        55,   // weight
+        3,    // lead-in (x10 ms)
+        4,    // tail (x10 ms)
+        10,   // min WPM
+        25,   // WPM range
+        6,    // 1st extension
+        7,    // key compensation
+        15,   // farnsworth
+        50,   // paddle setpoint
+        50,   // dit/dah ratio
+        0x06, // pin config
+        0xFF}); // pot range
+
+  TEST_ASSERT_EQUAL_UINT8(28, mock.speed);
+  TEST_ASSERT_EQUAL_UINT8(55, mock.weighting);
+  TEST_ASSERT_EQUAL_UINT16(30, mock.pttLeadMs);
+  TEST_ASSERT_EQUAL_UINT16(40, mock.pttTailMs);
+  TEST_ASSERT_EQUAL_UINT8(6, mock.firstExtension);
+  TEST_ASSERT_EQUAL_UINT8(7, mock.keyComp);
+  TEST_ASSERT_EQUAL_UINT8(15, mock.farnsworth);
+
+  openHost(); // parser is synchronized after exactly 15 payload bytes
+}
+
+void test_load_defaults_zero_speed_keeps_existing_speed() {
+  feed(0x0F);
+  feed(0x00);
+  feed(0x00); // speed 0 = "from pot"
+  for (int i = 0; i < 13; ++i) feed(50);
+  TEST_ASSERT_EQUAL_UINT8(23, mock.speed);
+}
+
+void test_status_change_is_pushed_unsolicited_while_host_open() {
+  openHost();
+  Serial2.tx.clear();
+
+  WinkeyEmulator::poll(); // no change -> nothing sent
+  TEST_ASSERT_EQUAL_size_t(0, Serial2.tx.size());
+
+  mock.status.txActive = true;
+  mock.status.pttSource = TxManager::Source::Winkey;
+  WinkeyEmulator::poll();
+  TEST_ASSERT_EQUAL_size_t(1, Serial2.tx.size());
+  TEST_ASSERT_EQUAL_HEX8(0xC4, Serial2.tx[0]);
+
+  WinkeyEmulator::poll(); // same status -> not repeated
+  TEST_ASSERT_EQUAL_size_t(1, Serial2.tx.size());
+
+  mock.status.txActive = false;
+  WinkeyEmulator::poll();
+  TEST_ASSERT_EQUAL_size_t(2, Serial2.tx.size());
+  TEST_ASSERT_EQUAL_HEX8(0xC0, Serial2.tx[1]);
+}
+
+void test_status_is_not_pushed_while_host_closed() {
+  mock.status.txActive = true;
+  mock.status.pttSource = TxManager::Source::Winkey;
+  WinkeyEmulator::poll();
+  TEST_ASSERT_EQUAL_size_t(0, Serial2.tx.size());
+}
+
+void test_status_is_not_pushed_mid_command() {
+  openHost();
+  Serial2.tx.clear();
+  feed(0x02); // Set Speed, parameter still pending
+  mock.status.txActive = true;
+  mock.status.pttSource = TxManager::Source::Winkey;
+  WinkeyEmulator::poll();
+  TEST_ASSERT_EQUAL_size_t(0, Serial2.tx.size());
+
+  feed(30); // command complete -> change reported right after
+  TEST_ASSERT_EQUAL_size_t(1, Serial2.tx.size());
+  TEST_ASSERT_EQUAL_HEX8(0xC4, Serial2.tx[0]);
+}
+
+void test_polled_status_is_not_repeated_unsolicited() {
+  openHost();
+  Serial2.tx.clear();
+  mock.status.txActive = true;
+  mock.status.pttSource = TxManager::Source::Winkey;
+  Serial2.pushRx(0x15);
+  WinkeyEmulator::poll();
+  WinkeyEmulator::poll();
+  TEST_ASSERT_EQUAL_size_t(1, Serial2.tx.size());
+  TEST_ASSERT_EQUAL_HEX8(0xC4, Serial2.tx[0]);
+}
+
+void test_wk3_admin_commands_keep_parser_in_sync() {
+  feed({0x00, 0x0F, 0x02}); // Load X1MODE <nn>
+  feed({0x00, 0x16, 0x02}); // Load X2MODE <nn>
+  feed({0x00, 0x19, 0x02}); // Sidetone volume <nn>
+  feed({0x00, 0x13, 0x02, 0x02}); // RTTY registers <p1><p2>
+  TEST_ASSERT_EQUAL_UINT8(23, mock.speed); // no payload byte ran as Set Speed
+
+  feed({0x00, 0x15}); // Read Vcc
+  feed({0x00, 0x17}); // FW minor revision
+  feed({0x00, 0x18}); // IC type
+  TEST_ASSERT_EQUAL_size_t(3, Serial2.tx.size());
+  TEST_ASSERT_EQUAL_UINT8(3, Serial2.tx[1]);
+}
+
+void test_mode_and_ratio_changes_cancel_buffered_speed_override() {
+  feed({0x0E, 0x00});
+  feed({0x17, 50});
+  TEST_ASSERT_EQUAL_INT(2, mock.immediateCancelSpeedCount);
+}
+
+void test_cancel_buffered_speed_is_forwarded() {
+  feed({0x1C, 40});
+  feed(0x1E);
+  TEST_ASSERT_EQUAL_size_t(1, mock.bufferedSpeeds.size());
+  TEST_ASSERT_EQUAL_INT(1, mock.cancelSpeedCount);
+}
+
+void test_pointer_command_consumes_operand_when_sub_op_has_one() {
+  openHost();
+  feed({0x16, 0x00}); // reset pointers: no operand
+  feed('A');
+  feed({0x16, 0x01, 'X'}); // move pointer (overwrite) <nn>
+  feed({0x16, 0x02, 'Y'}); // move pointer (append) <nn>
+  feed({0x16, 0x03, 'Z'}); // add <nn> nulls
+  feed('B');
+
+  TEST_ASSERT_EQUAL_size_t(2, mock.chars.size());
+  TEST_ASSERT_EQUAL_UINT8('A', mock.chars[0]);
+  TEST_ASSERT_EQUAL_UINT8('B', mock.chars[1]);
+}
+
 void test_switch_to_fsk2_reconfigures_uart_and_routes_control_bytes() {
   Config cfg;
   cfg.uart2Mode = Uart2Mode::Fsk2;
@@ -322,6 +464,16 @@ int main(int, char **) {
   RUN_TEST(test_status_ignores_activity_from_other_sources);
   RUN_TEST(test_admin_reset_restores_winkey_defaults);
   RUN_TEST(test_admin_load_eeprom_consumes_all_payload_bytes);
+  RUN_TEST(test_load_defaults_applies_supported_fields);
+  RUN_TEST(test_load_defaults_zero_speed_keeps_existing_speed);
+  RUN_TEST(test_status_change_is_pushed_unsolicited_while_host_open);
+  RUN_TEST(test_status_is_not_pushed_while_host_closed);
+  RUN_TEST(test_status_is_not_pushed_mid_command);
+  RUN_TEST(test_polled_status_is_not_repeated_unsolicited);
+  RUN_TEST(test_wk3_admin_commands_keep_parser_in_sync);
+  RUN_TEST(test_mode_and_ratio_changes_cancel_buffered_speed_override);
+  RUN_TEST(test_cancel_buffered_speed_is_forwarded);
+  RUN_TEST(test_pointer_command_consumes_operand_when_sub_op_has_one);
   RUN_TEST(test_switch_to_fsk2_reconfigures_uart_and_routes_control_bytes);
   RUN_TEST(test_apply_same_mode_does_not_reopen_uart_or_reset_parser);
   return UNITY_END();

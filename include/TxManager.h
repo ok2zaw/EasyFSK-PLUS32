@@ -81,8 +81,10 @@ bool cwEnqueueChar(uint8_t asciiByte);
 bool cwEnqueueMergeMark();               // Winkey 0x1B: no gap before the NEXT char queued
 bool cwEnqueueSideEffect(Morse::SideEffect effect, uint8_t value = 0);
 bool cwEnqueueBufferedSpeed(uint8_t wpm); // Winkey 0x1C (buffered, takes its turn in order)
+bool cwEnqueueCancelBufferedSpeed();      // Winkey 0x1E: restore the speed in force before 0x1C
+void cwCancelBufferedSpeedOverride();     // immediate mode/ratio changes also restore the base speed
 void cwBackspace();                       // Winkey 0x08
-void cwClearPendingBuffer();              // Winkey 0x0A: drop everything not yet playing
+void cwClearPendingBuffer();              // Winkey 0x0A: drop the buffer AND stop the in-flight character
 uint16_t cwBufferPending();                // for the Winkey status byte's XOFF bit
 
 void cwSetSpeedWpm(uint8_t wpm);          // Winkey 0x02 (immediate)
