@@ -204,7 +204,7 @@ void CwBuffer::recomputeTiming() {
   }
 }
 
-CwBuffer::NextKind CwBuffer::peekKind() {
+NextKind CwBuffer::peekKind() {
   if (expanding_) return NextKind::Element; // mid-character; more Runs pending regardless of buffer content
   if (count_ == 0) return NextKind::None;
   const Item &front = buf_[head_];

@@ -66,7 +66,7 @@
     border-bottom: 3px solid transparent; white-space: nowrap;
   }
   nav button.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
-  main { max-width: 720px; margin: 0 auto; padding: 1.25rem; }
+  main { max-width: 1180px; margin: 0 auto; padding: 1.25rem; }
   .card {
     background: var(--card-bg); border: 1px solid var(--border); border-radius: .9em;
     padding: 1.1rem 1.25rem; margin-bottom: 1rem;
@@ -105,6 +105,97 @@
   .tab { display: none; }
   .tab.active { display: block; }
   #staticFields { display: none; }
+  .rtty-toolbar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem;
+  }
+  .rtty-titleline { display: flex; align-items: center; gap: .65rem; flex-wrap: wrap; }
+  .rtty-titleline h2 { margin: 0; }
+  .preview-badge {
+    display: inline-flex; align-items: center; gap: .35rem; padding: .25em .55em;
+    border: 1px solid var(--accent); border-radius: 999px; color: var(--text);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    font-size: .7rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  }
+  .rtty-actions { display: flex; align-items: center; gap: .65rem; flex-wrap: wrap; }
+  .switch-label {
+    display: inline-flex; align-items: center; gap: .5rem; margin: 0; cursor: pointer;
+    color: var(--muted); font-size: .82rem; font-weight: 600;
+  }
+  .switch-label input { position: absolute; opacity: 0; pointer-events: none; }
+  .switch-track {
+    position: relative; width: 2.45rem; height: 1.35rem; border-radius: 999px;
+    background: var(--border); transition: background .2s ease;
+  }
+  .switch-track::after {
+    content: ''; position: absolute; width: .95rem; height: .95rem; top: .2rem; left: .2rem;
+    border-radius: 50%; background: var(--card-bg); box-shadow: 0 1px 4px rgba(0,0,0,.28);
+    transition: transform .2s ease;
+  }
+  .switch-label input:checked + .switch-track { background: var(--accent); }
+  .switch-label input:checked + .switch-track::after { transform: translateX(1.1rem); }
+  .switch-label input:focus-visible + .switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .signal-strip {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .65rem;
+    margin-bottom: .8rem;
+  }
+  .signal-metric {
+    border: 1px solid var(--border); border-radius: .65rem; padding: .6rem .7rem;
+    background: var(--input-bg);
+  }
+  .signal-metric span { display: block; color: var(--muted); font-size: .68rem; text-transform: uppercase; letter-spacing: .05em; }
+  .signal-metric strong { display: block; margin-top: .2rem; font-size: .95rem; }
+  .monitor-grid {
+    display: grid; grid-template-columns: minmax(260px, .9fr) minmax(340px, 1.35fr);
+    gap: 1rem; align-items: stretch;
+  }
+  .monitor-panel {
+    min-width: 0; border: 1px solid var(--border); border-radius: .8rem;
+    background: #090d1b; overflow: hidden;
+  }
+  .monitor-head {
+    display: flex; align-items: baseline; justify-content: space-between; gap: .7rem;
+    padding: .65rem .8rem; border-bottom: 1px solid rgba(255,255,255,.12);
+    color: #eef4ff;
+  }
+  .monitor-head h3 { margin: 0; font-family: 'Montserrat', sans-serif; font-size: .82rem; letter-spacing: .04em; text-transform: uppercase; }
+  .monitor-head span { color: #8f9db8; font-size: .68rem; }
+  .monitor-canvas { display: block; width: 100%; height: 285px; background: #090d1b; }
+  .decoder-panel { margin-top: 1rem; padding: 0; overflow: hidden; }
+  .decoder-panel[hidden] { display: none; }
+  .tx-panel { margin-top: 1rem; }
+  .tx-panel[hidden] { display: none; }
+  .decoder-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+    padding: .9rem 1rem; border-bottom: 1px solid var(--border);
+  }
+  .decoder-head h3 { margin: 0; font-size: 1rem; }
+  .decoder-columns { display: grid; grid-template-columns: 1fr 1fr; }
+  .decoder-column { min-width: 0; padding: 1rem; }
+  .decoder-column + .decoder-column { border-left: 1px solid var(--border); }
+  .decoder-label {
+    display: flex; justify-content: space-between; gap: .6rem; margin-bottom: .6rem;
+    color: var(--muted); font-size: .72rem; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+  .decoder-text {
+    margin: 0; min-height: 7.2rem; max-height: 15rem; overflow-y: auto;
+    color: #86efac; background: #090d1b; border-radius: .55rem; padding: .8rem;
+    font: 500 .95rem/1.55 ui-monospace, SFMono-Regular, Consolas, monospace;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .decoder-char-weak { color: #eab308; }
+  .decoder-char-bad { color: #f87171; }
+  @media (max-width: 780px) {
+    .monitor-grid { grid-template-columns: 1fr; }
+    .monitor-canvas { height: 250px; }
+    .signal-strip { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 520px) {
+    main { padding: .85rem; }
+    .decoder-columns { grid-template-columns: 1fr; }
+    .decoder-column + .decoder-column { border-left: 0; border-top: 1px solid var(--border); }
+  }
 </style>
 </head>
 <body>
@@ -119,8 +210,8 @@
 
 <nav>
   <button data-tab="status" class="active">Status</button>
+  <button data-tab="rtty">RTTY Monitor</button>
   <button data-tab="config">Configuration</button>
-  <button data-tab="send">Send</button>
   <button data-tab="backup">Backup / Restore</button>
 </nav>
 
@@ -147,6 +238,99 @@
         <div class="item"><div class="label">Free heap</div><div class="value" id="sysHeap">—</div></div>
         <div class="item"><div class="label">Link</div><div class="value" id="sysLink">—</div></div>
       </div>
+    </div>
+  </section>
+
+  <!-- RTTY MONITOR -->
+  <section id="tab-rtty" class="tab">
+    <div class="card">
+      <div class="rtty-toolbar">
+        <div class="rtty-titleline">
+          <h2>RTTY monitor</h2>
+          <span class="preview-badge" id="rttyDataBadge">● Preview data</span>
+        </div>
+        <div class="rtty-actions">
+          <label class="switch-label" for="decoderToggle">
+            <input type="checkbox" id="decoderToggle" checked>
+            <span class="switch-track" aria-hidden="true"></span>
+            Show decoder
+          </label>
+          <label class="switch-label" for="transmitterToggle">
+            <input type="checkbox" id="transmitterToggle" checked>
+            <span class="switch-track" aria-hidden="true"></span>
+            Show transmitter
+          </label>
+          <button class="iconbtn" id="rttyPause" type="button">Pause</button>
+        </div>
+      </div>
+
+      <div class="signal-strip" aria-label="RTTY signal status">
+        <div class="signal-metric"><span>Mark</span><strong id="rttyMark">2125 Hz</strong></div>
+        <div class="signal-metric"><span>Space</span><strong id="rttySpace">2295 Hz</strong></div>
+        <div class="signal-metric"><span>SNR</span><strong id="rttySnr">18.4 dB</strong></div>
+        <div class="signal-metric"><span>Bit sync</span><strong id="rttySync">Locked</strong></div>
+      </div>
+
+      <div class="monitor-grid">
+        <article class="monitor-panel">
+          <div class="monitor-head">
+            <h3>Tuning pattern</h3>
+            <span>Mark × Space</span>
+          </div>
+          <canvas id="tuningCanvas" class="monitor-canvas" aria-label="RTTY Lissajous tuning pattern"></canvas>
+        </article>
+        <article class="monitor-panel">
+          <div class="monitor-head">
+            <h3>Waterfall</h3>
+            <span>1800–2600 Hz · newest at top</span>
+          </div>
+          <canvas id="waterfallCanvas" class="monitor-canvas" aria-label="RTTY spectrum waterfall"></canvas>
+        </article>
+      </div>
+    </div>
+
+    <div class="card decoder-panel" id="decoderPanel">
+      <div class="decoder-head">
+        <div>
+          <h3>RTTY decoder</h3>
+          <div class="hint">DEC1 samples the bit midpoint; DEC2 averages the middle 70%.</div>
+        </div>
+        <button class="iconbtn" id="decoderClear" type="button">Clear</button>
+      </div>
+      <div class="decoder-columns">
+        <div class="decoder-column">
+          <div class="decoder-label"><span>DEC1 · midpoint</span><span id="dec1Quality">93%</span></div>
+          <pre class="decoder-text" id="decoderText1">CQ CQ CQ DE OK2ZAW OK2ZAW K
+599 014 014</pre>
+        </div>
+        <div class="decoder-column">
+          <div class="decoder-label"><span>DEC2 · averaged</span><span id="dec2Quality">98%</span></div>
+          <pre class="decoder-text" id="decoderText2">CQ CQ CQ DE OK2ZAW OK2ZAW K
+599 014 014</pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="card tx-panel" id="transmitterPanel">
+      <h2>Manual transmit</h2>
+      <div class="field">
+        <label for="sendText">Text to send</label>
+        <input type="text" id="sendText" placeholder="CQ CQ DE ...">
+        <div class="hint">
+          If idle, Send keys up, sends this text, then automatically unkeys.
+          If already transmitting, this text is appended to the buffer.
+        </div>
+      </div>
+      <div class="actions">
+        <button class="primary" id="btnSend">Send</button>
+        <button class="secondary" id="btnEnd">End (buffered)</button>
+        <button class="secondary danger" id="btnAbort">Abort</button>
+      </div>
+      <div class="hint" style="margin-top:.9rem;">
+        End finishes the current buffer, then unkeys. Abort clears the buffer and
+        unkeys immediately (still respects the PA/PTT tail timing above).
+      </div>
+      <div class="msg" id="sendMsg"></div>
     </div>
   </section>
 
@@ -244,31 +428,6 @@
       </div>
       <div class="msg" id="configMsg"></div>
     </form>
-  </section>
-
-  <!-- SEND -->
-  <section id="tab-send" class="tab">
-    <div class="card">
-      <h2>Manual transmit</h2>
-      <div class="field">
-        <label for="sendText">Text to send</label>
-        <input type="text" id="sendText" placeholder="CQ CQ DE ...">
-        <div class="hint">
-          If idle, Send keys up, sends this text, then automatically unkeys.
-          If already transmitting, this text is appended to the buffer.
-        </div>
-      </div>
-      <div class="actions">
-        <button class="primary" id="btnSend">Send</button>
-        <button class="secondary" id="btnEnd">End (buffered)</button>
-        <button class="secondary danger" id="btnAbort">Abort</button>
-      </div>
-      <div class="hint" style="margin-top:.9rem;">
-        End finishes the current buffer, then unkeys. Abort clears the buffer and
-        unkeys immediately (still respects the PA/PTT tail timing above).
-      </div>
-      <div class="msg" id="sendMsg"></div>
-    </div>
   </section>
 
   <!-- BACKUP -->
@@ -449,6 +608,179 @@
     };
     reader.readAsText(fileInput.files[0]);
   });
+
+  // ---- RTTY monitor preview ----
+  // The firmware does not publish RX DSP frames yet. These canvases use a
+  // lightweight synthetic signal so the layout and controls can be reviewed
+  // now; replace the generated points/rows with WebSocket payloads when the
+  // TuneMonitor data contract is implemented.
+  var tuningCanvas = document.getElementById('tuningCanvas');
+  var waterfallCanvas = document.getElementById('waterfallCanvas');
+  var decoderToggle = document.getElementById('decoderToggle');
+  var decoderPanel = document.getElementById('decoderPanel');
+  var transmitterToggle = document.getElementById('transmitterToggle');
+  var transmitterPanel = document.getElementById('transmitterPanel');
+  var rttyPaused = false;
+  var rttyPhase = 0;
+  var lastWaterfallAt = 0;
+  var decoderVisibleKey = 'easyfsk-rtty-decoder-visible';
+  var transmitterVisibleKey = 'easyfsk-rtty-transmitter-visible';
+
+  function sizeMonitorCanvas(canvas) {
+    var rect = canvas.getBoundingClientRect();
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var width = Math.max(1, Math.round(rect.width * dpr));
+    var height = Math.max(1, Math.round(rect.height * dpr));
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+      return true;
+    }
+    return false;
+  }
+
+  function drawTuningPattern() {
+    sizeMonitorCanvas(tuningCanvas);
+    var ctx = tuningCanvas.getContext('2d');
+    var w = tuningCanvas.width;
+    var h = tuningCanvas.height;
+    ctx.fillStyle = '#090d1b';
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.strokeStyle = 'rgba(126, 148, 185, .15)';
+    ctx.lineWidth = 1;
+    for (var gx = 1; gx < 4; gx++) {
+      ctx.beginPath(); ctx.moveTo(w * gx / 4, 0); ctx.lineTo(w * gx / 4, h); ctx.stroke();
+    }
+    for (var gy = 1; gy < 4; gy++) {
+      ctx.beginPath(); ctx.moveTo(0, h * gy / 4); ctx.lineTo(w, h * gy / 4); ctx.stroke();
+    }
+    ctx.strokeStyle = 'rgba(219, 164, 28, .32)';
+    ctx.beginPath(); ctx.moveTo(w / 2, 0); ctx.lineTo(w / 2, h); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, h / 2); ctx.lineTo(w, h / 2); ctx.stroke();
+
+    var trails = [
+      { alpha: .12, offset: -.055, width: 5 },
+      { alpha: .24, offset: -.025, width: 3 },
+      { alpha: .95, offset: 0, width: 1.6 }
+    ];
+    trails.forEach(function (trail) {
+      ctx.beginPath();
+      for (var i = 0; i <= 320; i++) {
+        var t = i / 320 * Math.PI * 2;
+        var flutter = Math.sin(t * 11 + rttyPhase * 2) * .012;
+        var x = w / 2 + Math.sin(t * 2 + trail.offset) * w * (.34 + flutter);
+        var y = h / 2 + Math.sin(t * 3 + .72 + rttyPhase * .12) * h * .34;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = 'rgba(72, 232, 188, ' + trail.alpha + ')';
+      ctx.lineWidth = trail.width * Math.min(window.devicePixelRatio || 1, 2);
+      ctx.shadowColor = 'rgba(72, 232, 188, .65)';
+      ctx.shadowBlur = trail.alpha > .8 ? 7 : 2;
+      ctx.stroke();
+    });
+    ctx.shadowBlur = 0;
+  }
+
+  function heatColour(level) {
+    level = Math.max(0, Math.min(1, level));
+    var r, g, b;
+    if (level < .28) {
+      r = 5; g = 15 + level * 80; b = 35 + level * 280;
+    } else if (level < .62) {
+      var mid = (level - .28) / .34;
+      r = 8 + mid * 28; g = 37 + mid * 185; b = 113 - mid * 64;
+    } else {
+      var hot = (level - .62) / .38;
+      r = 36 + hot * 219; g = 222 - hot * 42; b = 49 - hot * 37;
+    }
+    return [Math.round(r), Math.round(g), Math.round(b)];
+  }
+
+  function drawWaterfallRow() {
+    var resized = sizeMonitorCanvas(waterfallCanvas);
+    var ctx = waterfallCanvas.getContext('2d');
+    var w = waterfallCanvas.width;
+    var h = waterfallCanvas.height;
+    if (resized) {
+      ctx.fillStyle = '#090d1b';
+      ctx.fillRect(0, 0, w, h);
+    } else {
+      ctx.drawImage(waterfallCanvas, 0, 0, w, h - 2, 0, 2, w, h - 2);
+    }
+
+    var row = ctx.createImageData(w, 2);
+    var mark = .406 + Math.sin(rttyPhase * .31) * .004;
+    var space = .619 + Math.sin(rttyPhase * .23) * .004;
+    for (var x = 0; x < w; x++) {
+      var f = x / w;
+      var markPeak = Math.exp(-Math.pow((f - mark) / .012, 2));
+      var spacePeak = Math.exp(-Math.pow((f - space) / .012, 2));
+      var shoulder = .22 * Math.exp(-Math.pow((f - .51) / .11, 2));
+      var noise = .04 + Math.random() * .11;
+      var level = Math.min(1, noise + Math.max(markPeak, spacePeak) * .84 + shoulder);
+      var rgb = heatColour(level);
+      for (var py = 0; py < 2; py++) {
+        var p = (py * w + x) * 4;
+        row.data[p] = rgb[0]; row.data[p + 1] = rgb[1]; row.data[p + 2] = rgb[2]; row.data[p + 3] = 255;
+      }
+    }
+    ctx.putImageData(row, 0, 0);
+
+    ctx.fillStyle = 'rgba(255,255,255,.7)';
+    ctx.font = Math.max(10, Math.round(w / 65)) + 'px ui-monospace, monospace';
+    ctx.fillText('M', Math.round(mark * w) + 5, 14);
+    ctx.fillText('S', Math.round(space * w) + 5, 14);
+  }
+
+  function animateRttyMonitor(timestamp) {
+    var tabVisible = document.getElementById('tab-rtty').classList.contains('active');
+    if (tabVisible && !rttyPaused) {
+      rttyPhase += .025;
+      drawTuningPattern();
+      if (timestamp - lastWaterfallAt >= 55) {
+        drawWaterfallRow();
+        lastWaterfallAt = timestamp;
+      }
+      document.getElementById('rttySnr').textContent = (18.2 + Math.sin(rttyPhase * .7) * 1.3).toFixed(1) + ' dB';
+    }
+    window.requestAnimationFrame(animateRttyMonitor);
+  }
+
+  function applyDecoderVisibility(visible) {
+    decoderToggle.checked = visible;
+    decoderPanel.hidden = !visible;
+    decoderToggle.setAttribute('aria-expanded', visible ? 'true' : 'false');
+    localStorage.setItem(decoderVisibleKey, visible ? '1' : '0');
+  }
+
+  var savedDecoderVisibility = localStorage.getItem(decoderVisibleKey);
+  applyDecoderVisibility(savedDecoderVisibility !== '0');
+  decoderToggle.addEventListener('change', function () {
+    applyDecoderVisibility(decoderToggle.checked);
+  });
+
+  function applyTransmitterVisibility(visible) {
+    transmitterToggle.checked = visible;
+    transmitterPanel.hidden = !visible;
+    transmitterToggle.setAttribute('aria-expanded', visible ? 'true' : 'false');
+    localStorage.setItem(transmitterVisibleKey, visible ? '1' : '0');
+  }
+
+  var savedTransmitterVisibility = localStorage.getItem(transmitterVisibleKey);
+  applyTransmitterVisibility(savedTransmitterVisibility !== '0');
+  transmitterToggle.addEventListener('change', function () {
+    applyTransmitterVisibility(transmitterToggle.checked);
+  });
+  document.getElementById('rttyPause').addEventListener('click', function () {
+    rttyPaused = !rttyPaused;
+    this.textContent = rttyPaused ? 'Resume' : 'Pause';
+  });
+  document.getElementById('decoderClear').addEventListener('click', function () {
+    document.getElementById('decoderText1').textContent = '';
+    document.getElementById('decoderText2').textContent = '';
+  });
+  window.requestAnimationFrame(animateRttyMonitor);
 
   // ---- system info (one-shot, refreshed occasionally) ----
   function loadSystem() {

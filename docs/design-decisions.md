@@ -73,9 +73,9 @@ FSK/PTT bit-timing discipline, and add wired LAN.
   an OTA-capable partition scheme (two ~1.9MB app slots + a small
   LittleFS partition for `/config.json`) from the start as cheap
   insurance — even before OTA itself is implemented, since the flash is
-  there either way. Actual compiled binary size should be sanity-checked
-  after the first real build, but nothing in this design approaches that
-  budget. 16MB-revision boards stay fully compatible (just unused
+  there either way. The first verified release build uses 967,337 bytes of
+  its 1,966,080-byte application slot (49.2%) and 45,856 bytes of RAM
+  (14.0%). 16MB-revision boards stay fully compatible (just unused
   headroom), so one firmware build target covers both revisions.
 
 ## Decisions made
@@ -97,10 +97,10 @@ FSK/PTT bit-timing discipline, and add wired LAN.
   inhibit check, exactly like today's firmware already does for the first
   two ("no matter what asks it to").
 - **Bit-timing architecture for ESP32**: replace TimerOne with the native
-  hw_timer API (`timerBegin(freq)` / `timerAttachInterrupt` / `timerAlarm`,
-  current arduino-esp32 3.x shape — verified against Espressif's current
-  docs, not assumed from training data, since the API shape changed
-  2.x→3.x). Do the actual `digitalWrite(FSK_PIN, ...)` bit toggle **inside**
+  hw_timer API. The reproducible build is pinned to Arduino-ESP32 2.0.17 and
+  therefore uses `timerBegin(timer, divider, countUp)`,
+  `timerAttachInterrupt(..., edge)`, and `timerAlarmWrite`. Do the actual
+  `digitalWrite(FSK_PIN, ...)` bit toggle **inside**
   the ISR itself (Espressif docs confirm this is safe/supported), not via
   the old AVR-style flag-then-loop() pattern — removes dependency on loop()
   scheduling latency, which matters once WiFi/LAN driver tasks are
@@ -451,7 +451,7 @@ Page ↔ endpoint mapping:
 ## Firmware task architecture (as implemented)
 
 1. **Half-bit timer ISR** (`FskTimer.cpp`, hardware timer via
-   `timerBegin`/`timerAttachInterrupt`/`timerAlarm`, `ARDUINO_ISR_ATTR`).
+   `timerBegin`/`timerAttachInterrupt`/`timerAlarmWrite`, `ARDUINO_ISR_ATTR`).
    Ports `processHalfBit()`'s bit-position/stop-bit state machine.
    Reads a 4-slot ring buffer of pre-computed Baudot symbols (fed by
    TxManager, one character ahead), toggles `FSK_PIN` directly from the
@@ -949,6 +949,79 @@ the tuning indicator/waterfall and shares almost its entire front end.
   never touching the timing-critical `FskTimer` ISR or `TxManager` task
   on core 1** — same isolation property as the Lissajous/waterfall.
 
+### Reference implementation: WIFILT `rtty-codec.js` (researched 2026-09-27)
+
+User pointed at [ok1hra/wifilt](https://github.com/ok1hra/wifilt), an
+ESP32/native web interface for Icom LAN transceivers by the same author as
+`serial2fsk` already cited above, and asked whether its RTTY spectrum display
+and decoder contain anything worth adopting. The project's `SOFTWARE.md` and
+RTTY demodulator source, `data/rtty-codec.js`, were reviewed. That source
+credits horusdemodlib/Project Horus for the Goertzel, bit-sync, and
+continuous-phase technique. The decoder-side findings below are adopted;
+WIFILT's AFC/AUTOTUNE feature is explicitly declined because it is not needed
+for this design.
+
+- **Sliding-window Goertzel instead of block-by-block processing.** WIFILT
+  uses a 188-sample window (23.5ms) re-evaluated every 8 samples rather than
+  every 188, so tone magnitudes update continuously, hop by hop. This is
+  directly applicable to our I/Q-mixer pipeline in the `TuneMonitor`
+  architecture above, which is already continuous by construction, and
+  therefore confirms that choice rather than changing it. WIFILT also sizes
+  the window so the Mark/Space separation falls on an exact null of the other
+  tone's filter response (its 170Hz shift is exactly four bins at 188
+  samples). The same technique should be applied when sizing our I/Q
+  low-pass/window against `tune.shiftHz`, instead of choosing an arbitrary
+  round window length.
+- **ATC (Adaptive Threshold Control), adopted instead of a plain magnitude
+  comparator.** Rather than selecting whichever of Mark or Space is larger at
+  the current instant, WIFILT tracks each tone magnitude through an envelope
+  follower with asymmetric attack and decay: fast attack at approximately
+  one quarter of a bit period and slow decay over several bit periods. It
+  subtracts an estimated noise floor before comparing the tones. This is
+  adopted for our tone comparator because it should be substantially more
+  robust to fading/QSB than a bare magnitude comparison and is only a small
+  addition to the I/Q magnitudes already being computed.
+- **Two simultaneous decoder variants (DEC1/DEC2), adopted as an optional
+  refinement.** DEC1 samples the ATC decision value at the exact bit midpoint;
+  DEC2 integrates or averages it over the middle approximately 70% of the bit
+  for additional noise immunity. WIFILT displays both side by side so the
+  operator can compare copy quality. This maps directly to our K0JJR-derived
+  plan to oversample and vote across the bit interior: DEC2 is that plan and
+  DEC1 is the simpler fallback. Both are worth implementing because DEC1 is a
+  useful real-hardware sanity check against DEC2, not merely an alternative.
+- **DPLL/flywheel for continuous traffic, adopted as an enhancement rather
+  than a requirement.** For uninterrupted text without a clean gap between
+  characters, WIFILT predicts the next start-bit edge exactly 7.5 bit periods
+  after the previous one and closes on that prediction when no explicit
+  mark→space edge is detected. This preserves decoding through the low-value
+  stop-bit region without waiting for a transition that may not arrive
+  cleanly. It complements rather than replaces the existing plan to resync at
+  every detected start-bit edge; the flywheel fills in only when an edge is
+  missed.
+- **Squelch by SNR rather than absolute level, adopted as the squelch model.**
+  A smoothed `|markMag - spaceMag|` signal proxy versus
+  `min(markMag, spaceMag)` noise proxy produces an SNR estimate with roughly
+  1dB hysteresis to prevent threshold chatter. This has the same shape as the
+  already-decided Signal Quality calculation
+  (`SNR_dB = 20*log10((magM+magS) /
+  max(magTotal-(magM+magS), floor))`), but gates the decoder instead of only
+  driving a display. The decoder should therefore consume the existing Signal
+  Quality SNR value rather than calculate a separate second estimate.
+- **AFC/AUTOTUNE considered and explicitly declined (2026-09-27).** WIFILT's
+  S&P-only AUTOTUNE mode (Alt+T) nudges the radio's actual dial frequency to
+  align a received signal with the configured markers after five consistent
+  measurements over at least two seconds. That is genuine automatic
+  frequency control, which the Honest limitation below identifies as absent.
+  This design deliberately continues to use the Lissajous display and LED
+  bargraph for manual operator tuning. The limitation therefore remains an
+  accepted scope boundary rather than a future gap to close.
+- **Not applicable here, recorded for completeness.** WIFILT receives audio
+  over the network from an Icom radio rather than through a local ADC, so its
+  sample chain, waterfall renderer, and UI framework do not transfer to our
+  GPIO34 ADC continuous-mode pipeline. Only the demodulation algorithm —
+  Goertzel, ATC, bit sync, DEC1/DEC2, DPLL, and SNR squelch — is adopted, not
+  its sampling or transport code.
+
 ### Twin Peak Filter — considered, not pursued (2026-09-03)
 
 User asked whether a "Twin Peak Filter" (the narrowband dual-bandpass
@@ -991,6 +1064,10 @@ operator's dial tuning exactly right first**, after which the
 fixed-frequency decoder should work well. This is a deliberate scope
 choice, not an oversight — adaptive frequency tracking would be a
 substantial future enhancement, not part of this first version.
+
+Reconfirmed 2026-09-27: WIFILT's AUTOTUNE implementation would be the natural
+reference if real AFC were added later, but the user explicitly decided
+against it. This remains a deliberate scope boundary, not a TODO.
 
 ### Proposed architecture sketch (not yet implemented)
 
@@ -1044,14 +1121,20 @@ substantial future enhancement, not part of this first version.
 - Whether RX decoding pauses entirely during own TX, or keeps running
   silently in the background for a web-only RX log.
 - Whether decode gets its own enable flag or shares `tune.enabled`.
-- Exact web display treatment (shared "live text" area vs. a separate
-  RX panel).
-- Oversampling factor (~5-8 samples/bit per the K0JJR paper is the
-  starting point) and the exact averaging/voting rule — not tuned yet,
-  no real signal to test against in this sandbox.
+- Exact web display treatment (shared "live text" area vs. a separate RX
+  panel). The WIFILT reference suggests a concrete option: dual DEC1/DEC2
+  columns shaded by per-character signal strength. It is not yet decided
+  whether to adopt that display treatment or only its underlying algorithm.
+- **Narrowed 2026-09-27:** adopt ATC as the adaptive-threshold tone decision
+  and implement both DEC1 (mid-bit sample) and DEC2 (middle approximately 70%
+  bit average, corresponding to the K0JJR oversample/vote idea), rather than
+  choosing only one. The exact DEC2 averaging-window width and ATC
+  attack/decay constants still require bench tuning with a real signal.
 - Whether a short RX text history (not just the current line) is worth
   keeping/scrolling on the web page — the LCD obviously can't do this,
   but the web page isn't limited to one line.
+- **Resolved 2026-09-27: no AFC/AUTOTUNE.** WIFILT implements it, but the user
+  explicitly decided this design does not need it; it is no longer open.
 - Not yet started in code — this whole section is design/research only,
   same status as the Lissajous/waterfall section above.
 

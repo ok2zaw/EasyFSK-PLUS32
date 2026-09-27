@@ -123,15 +123,18 @@ void begin(float baudRate, bool markHigh) {
   s_spaceLevel = markHigh ? LOW : HIGH;
   digitalWrite(FSK_PIN, s_markLevel);
 
-  s_timer = timerBegin(1000000); // 1MHz tick
-  timerAttachInterrupt(s_timer, &onHalfBit);
-  timerAlarm(s_timer, halfBitTicksFor(baudRate), true, 0);
+  // Arduino-ESP32 2.x timer API. The ESP32 APB timer clock is 80MHz;
+  // divider 80 gives a 1MHz counter (one tick per microsecond).
+  s_timer = timerBegin(0, 80, true);
+  timerAttachInterrupt(s_timer, &onHalfBit, true);
+  timerAlarmWrite(s_timer, halfBitTicksFor(baudRate), true);
+  timerAlarmEnable(s_timer);
 }
 
 void reconfigure(float baudRate, bool markHigh) {
   s_markLevel = markHigh ? HIGH : LOW;
   s_spaceLevel = markHigh ? LOW : HIGH;
-  timerAlarm(s_timer, halfBitTicksFor(baudRate), true, 0);
+  timerAlarmWrite(s_timer, halfBitTicksFor(baudRate), true);
 }
 
 void resetForNewTx() {

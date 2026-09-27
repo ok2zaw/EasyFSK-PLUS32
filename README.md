@@ -13,9 +13,9 @@ manual transmit.
 
 ## Status
 
-Early first pass at the full architecture — not yet tested on real
-hardware. Every module is a direct, deliberate port of the corresponding
-AVR logic (see comments throughout the source referencing
+Early first pass at the full architecture — build-verified, but not yet
+tested on real hardware. Every module is a direct, deliberate port of the
+corresponding AVR logic (see comments throughout the source referencing
 `TinyFSK_ZAW_01.cpp`), restructured only where the ESP32 architecture
 required it (see "What's different from the AVR original" below).
 
@@ -77,11 +77,10 @@ Flash both the firmware and the filesystem image — the web UI lives in
 `data/index.html` and is served from LittleFS, not compiled into the
 firmware image.
 
-This first version has not yet been build-verified with a real ESP32
-toolchain (only reviewed line-by-line and checked for balanced
-braces/parens) — the very first `pio run` after cloning may surface a
-compile error or two that a real toolchain would catch immediately. Please
-report anything `pio run` flags.
+The build environment is pinned in `platformio.ini`: PlatformIO Espressif32
+7.1.3 with Arduino-ESP32 2.0.17 and exact library versions. The first verified
+release build uses 45,856 bytes of RAM (14.0%) and 967,337 bytes of its
+1,966,080-byte application slot (49.2%). Hardware testing is still required.
 
 ## Configuration
 

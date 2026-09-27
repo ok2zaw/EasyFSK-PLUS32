@@ -52,7 +52,8 @@ void printConfig() {
 
 // Applies one field, mirroring the AVR original's single-key config
 // commands ('0'/'1' polarity, '4'/'5'/'7' baud, 'D'/'d' live-LCD toggle).
-void applySingleField(const char *key, JsonVariant value) {
+template <typename T>
+void applySingleField(const char *key, const T &value) {
   JsonDocument doc;
   doc[key] = value;
   JsonDocument errDoc;

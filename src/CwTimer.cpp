@@ -81,9 +81,12 @@ void begin() {
   pinMode(FSK_PIN, OUTPUT);
   digitalWrite(FSK_PIN, LOW);
 
-  s_timer = timerBegin(1000); // 1kHz tick (1ms period)
-  timerAttachInterrupt(s_timer, &onTick);
-  timerAlarm(s_timer, 1, true, 0); // 1 tick @ 1kHz = 1ms
+  // Arduino-ESP32 2.x timer API. Run the counter at 1MHz and fire every
+  // 1000 ticks, which gives the CW engine its 1ms scheduling period.
+  s_timer = timerBegin(1, 80, true);
+  timerAttachInterrupt(s_timer, &onTick, true);
+  timerAlarmWrite(s_timer, 1000, true);
+  timerAlarmEnable(s_timer);
 }
 
 void setActive(bool active) {

@@ -268,10 +268,10 @@ void pumpCwEngine() {
   }
 
   for (;;) {
-    Morse::CwBuffer::NextKind kind = s_cwBuffer.peekKind();
-    if (kind == Morse::CwBuffer::NextKind::None) break;
+    Morse::NextKind kind = s_cwBuffer.peekKind();
+    if (kind == Morse::NextKind::None) break;
 
-    if (kind == Morse::CwBuffer::NextKind::SideEffect) {
+    if (kind == Morse::NextKind::SideEffect) {
       if (!CwTimer::isIdle()) break; // let everything already queued finish first
       uint8_t value = 0;
       Morse::SideEffect effect = s_cwBuffer.takeSideEffect(value);
@@ -326,7 +326,7 @@ void pumpCwEngine() {
     noteCharStarted(startedAscii);
   }
 
-  if (s_cwBuffer.peekKind() == Morse::CwBuffer::NextKind::None && CwTimer::isIdle()) {
+  if (s_cwBuffer.peekKind() == Morse::NextKind::None && CwTimer::isIdle()) {
     CwTimer::setActive(false);
     beginTailSequence();
   }
@@ -487,7 +487,7 @@ void taskFn(void *) {
           // than chopping it into fragments. Only truly reset the CW buffer
           // once it's confirmed empty.
           if (wasCw) {
-            if (s_cwBuffer.peekKind() != Morse::CwBuffer::NextKind::None) {
+            if (s_cwBuffer.peekKind() != Morse::NextKind::None) {
               beginKeyUp(Source::Winkey, digitalRead(CPU_INH_PIN) == LOW);
             } else {
               s_cwBuffer.reset();
