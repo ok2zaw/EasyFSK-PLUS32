@@ -1,5 +1,6 @@
 #include "Config.h"
 #include <LittleFS.h>
+#include <cstdio>
 
 static const char *CONFIG_PATH = "/config.json";
 
@@ -94,7 +95,8 @@ void configToJson(const Config &cfg, JsonObject out) {
   net["dns"] = cfg.network.dns;
 }
 
-bool configValidate(JsonVariantConst in, Config &out, JsonObject errors) {
+static bool configMerge(JsonVariantConst in, Config &out, JsonObject errors,
+                        bool commitValidFieldsOnError) {
   Config result = out; // start from current values; only overwrite fields present in `in`
   bool ok = true;
 
@@ -216,18 +218,25 @@ bool configValidate(JsonVariantConst in, Config &out, JsonObject errors) {
           strncpy(f.field, v, f.fieldSize - 1);
           f.field[f.fieldSize - 1] = '\0';
         } else {
-          String key = String("network.") + f.jsonKey;
-          errors[key.c_str()] = "must be a valid IPv4 address";
+          char key[32];
+          snprintf(key, sizeof(key), "network.%s", f.jsonKey);
+          errors[key] = "must be a valid IPv4 address";
           ok = false;
         }
       }
     }
   }
 
-  if (ok) {
+  if (ok || commitValidFieldsOnError) {
     out = result;
   }
   return ok;
+}
+
+bool configValidate(JsonVariantConst in, Config &out, JsonObject errors) {
+  // Interactive/API updates are transactional: one invalid field rejects
+  // the whole candidate and leaves the active configuration untouched.
+  return configMerge(in, out, errors, false);
 }
 
 bool configLoad(Config &out) {
@@ -257,7 +266,10 @@ bool configLoad(Config &out) {
   // here (there's no user to show them to at boot time).
   JsonDocument errDoc;
   JsonObject errs = errDoc.to<JsonObject>();
-  configValidate(doc.as<JsonVariantConst>(), out, errs);
+  // A persisted file is recovered field by field. Valid values survive even
+  // if a different field is corrupt; only invalid fields retain the defaults
+  // assigned at the start of configLoad().
+  configMerge(doc.as<JsonVariantConst>(), out, errs, true);
   return true;
 }
 

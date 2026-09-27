@@ -53,6 +53,7 @@ void CwBuffer::reset() {
   pattern_ = nullptr;
   patternPos_ = 0;
   firstRunEver_ = true;
+  suppressNextLeadGap_ = false;
 }
 
 bool CwBuffer::popItem(Item &out) {
@@ -205,6 +206,15 @@ void CwBuffer::recomputeTiming() {
 }
 
 NextKind CwBuffer::peekKind() {
+  // A character remains marked as expanding until its final Run has been
+  // returned. Normalize that terminal state here so peekKind() never claims
+  // an Element is available when nextElementRun() would only clean up and
+  // return false (and so a following buffered side effect is visible
+  // immediately after the character's last Run).
+  if (expanding_ && expandingPhase_ == Phase::Done) {
+    expanding_ = false;
+    pattern_ = nullptr;
+  }
   if (expanding_) return NextKind::Element; // mid-character; more Runs pending regardless of buffer content
   if (count_ == 0) return NextKind::None;
   const Item &front = buf_[head_];
@@ -241,6 +251,11 @@ bool CwBuffer::nextElementRun(Run &out) {
       if (expandingAscii_ != ' ' && pattern_ == nullptr) {
         continue; // unsupported character -- silently skip, try the next item
       }
+      charDitMs_ = ditMs_;
+      charMarkScale_ = markScale_;
+      charGapScale_ = gapScale_;
+      charKeyCompMs_ = keyCompMs_;
+      charFirstExtMs_ = firstExtMs_;
       patternPos_ = 0;
       expanding_ = true;
       expandingPhase_ = Phase::LeadGap;
@@ -250,12 +265,29 @@ bool CwBuffer::nextElementRun(Run &out) {
       case Phase::LeadGap: {
         bool isSpaceItem = (pattern_ == nullptr);
         expandingPhase_ = isSpaceItem ? Phase::Done : Phase::Elements;
-        if (expandingSuppressGap_ || firstRunEver_) {
-          firstRunEver_ = false;
-          continue; // no gap Run this time -- fall straight into the character/Done
+
+        if (isSpaceItem) {
+          if (expandingSuppressGap_ || firstRunEver_) {
+            // Leading spaces (and a space used as the second half of a
+            // merged prosign) do not create a delay or consume the
+            // first-character state.
+            continue;
+          }
+          out.keyDown = false;
+          out.durationMs = static_cast<uint16_t>(wordGapMs_);
+          out.asciiByte = 0;
+          suppressNextLeadGap_ = true;
+          return true;
         }
+
+        if (expandingSuppressGap_ || firstRunEver_ || suppressNextLeadGap_) {
+          firstRunEver_ = false;
+          suppressNextLeadGap_ = false;
+          continue; // no gap Run this time -- fall straight into the character
+        }
+
         out.keyDown = false;
-        out.durationMs = static_cast<uint16_t>(isSpaceItem ? wordGapMs_ : interCharGapMs_);
+        out.durationMs = static_cast<uint16_t>(interCharGapMs_);
         out.asciiByte = 0;
         return true;
       }
@@ -266,10 +298,10 @@ bool CwBuffer::nextElementRun(Run &out) {
         patternPos_++;
         bool moreElements = (pattern_[patternPos_] != '\0');
 
-        float dur = (sym == '-') ? (ditMs_ * 3.0f) : ditMs_;
-        dur *= markScale_;
-        dur += keyCompMs_;
-        if (isFirstElement) dur += firstExtMs_;
+        float dur = (sym == '-') ? (charDitMs_ * 3.0f) : charDitMs_;
+        dur *= charMarkScale_;
+        dur += charKeyCompMs_;
+        if (isFirstElement) dur += charFirstExtMs_;
         if (dur < 1.0f) dur = 1.0f;
 
         out.keyDown = true;
@@ -280,7 +312,7 @@ bool CwBuffer::nextElementRun(Run &out) {
       }
 
       case Phase::IntraGap: {
-        float dur = ditMs_ * gapScale_ - static_cast<float>(keyCompMs_);
+        float dur = charDitMs_ * charGapScale_ - static_cast<float>(charKeyCompMs_);
         if (dur < 1.0f) dur = 1.0f;
         out.keyDown = false;
         out.durationMs = static_cast<uint16_t>(dur + 0.5f);

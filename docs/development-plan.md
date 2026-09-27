@@ -14,6 +14,9 @@ future work can continue without reconstructing the plan from conversation.
   the future MCP23017/encoder reassignment remains clearly marked as planned.
 - Build environment selected in milestone 1: PlatformIO Espressif32 7.1.3,
   Arduino-ESP32 2.0.17, with exact library versions in `platformio.ini`.
+- Native tests run locally with WinLibs GCC/G++ 16.1.0 and in GitHub Actions;
+  the current suite covers Baudot, TX sequencing, Morse generation, the
+  UART2/Winkey parser, and configuration validation/load/save behavior.
 
 ## Implementation order
 
@@ -24,9 +27,9 @@ future work can continue without reconstructing the plan from conversation.
 - [x] Obtain a clean firmware build and record the resulting resource usage.
 - [x] Keep the toolchain versions documented.
 
-Completed 2026-09-27: `pio run` succeeds. The current release build uses 45,864
-bytes of RAM (14.0%) and 968,477 bytes of the 1,966,080-byte application slot
-(49.2%).
+Completed 2026-09-27: `pio run` succeeds. The current release build uses 45,888
+bytes of RAM (14.0%) and 968,305 bytes of the 1,966,080-byte application slot
+(49.3%).
 
 ### 2. Minimum RTTY firmware
 
@@ -37,8 +40,8 @@ bytes of RAM (14.0%) and 968,477 bytes of the 1,966,080-byte application slot
   command from leaving the transmitter keyed.
 - [x] Add host-side Baudot and PTT/PA sequencing unit tests, including zero
   delays and `millis()` wraparound.
-- [x] Run host tests and the ESP32 firmware build in GitHub Actions CI; this
-  Windows workstation itself currently has no `gcc`/`g++` in `PATH`.
+- [x] Run host tests and the ESP32 firmware build in GitHub Actions CI; the
+  Windows workstation also has WinLibs `gcc`/`g++` 16.1.0 in `PATH`.
 - [x] Add a repeatable no-radio bench-test checklist.
 - Verify UART1 to Baudot to FSK output.
 - Verify hardware inhibit, key-up, buffered end, and immediate abort.
@@ -64,7 +67,8 @@ failure mode leaves PTT/PA in the safe state.
 
 ### 4. Configuration and network
 
-- Test missing, valid, and corrupt LittleFS configuration files.
+- [x] Test missing, valid, corrupt, and partly invalid LittleFS configuration
+  files with a host-side filesystem double.
 - Test web changes during RX and rejection during active TX.
 - Test Ethernet loss and reconnect.
 - [x] Add explicit handling/reporting for full TX queues and oversized
@@ -77,9 +81,18 @@ disturb an active transmission.
 
 - Validate UART2 in FSK2 mode first.
 - Validate the basic Winkey handshake and character playback.
-- Add and test speed, weighting, backspace, and buffered commands.
+- [x] Add host tests for the Winkey handshake/parser, speed, weighting,
+  backspace, status, mode switching, and buffered commands.
 - Implement physical mode routing through MCP23017 and replace the
   `ModeSelect` stub.
+
+Host-test update 2026-09-27: 47 tests pass across the native, native-Winkey,
+and native-config environments. The new Morse tests also fixed complete
+word-gap timing, terminal generator-state reporting, and timing changes that
+previously could split an in-flight character between old and new settings.
+Configuration tests fixed per-field recovery from a partly invalid persisted
+JSON file while preserving transactional validation for live API updates.
+Native test builds treat all compiler warnings as errors.
 
 Completion criterion: both UART2 modes pass host and timing tests, and the
 physical routing output always agrees with the selected mode.

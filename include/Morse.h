@@ -127,6 +127,16 @@ private:
   uint8_t expandingAscii_ = 0;
   bool expandingSuppressGap_ = false; // from Item::mergeWithPrev
   bool firstRunEver_ = true; // true until the first Run after reset(): suppresses a leading gap before the very first character of a fresh transmission
+  bool suppressNextLeadGap_ = false; // a space already emitted the complete word gap
+
+  // Snapshot taken when a character starts expanding. Immediate Winkey
+  // timing changes must affect the next character, not split an in-flight
+  // character between old and new timings.
+  float charDitMs_ = 60.0f;
+  float charMarkScale_ = 1.0f;
+  float charGapScale_ = 1.0f;
+  uint8_t charKeyCompMs_ = 0;
+  uint8_t charFirstExtMs_ = 0;
 
   bool popItem(Item &out); // internal: pop the front buffer item
 };

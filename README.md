@@ -13,7 +13,8 @@ manual transmit.
 
 ## Status
 
-Early first pass at the full architecture — build-verified, but not yet
+Early first pass at the full architecture — build-verified and covered by
+host-side Baudot, Morse, TX-sequencing, and Winkey parser tests, but not yet
 tested on real hardware. Every module is a direct, deliberate port of the
 corresponding AVR logic (see comments throughout the source referencing
 `TinyFSK_ZAW_01.cpp`), restructured only where the ESP32 architecture
@@ -84,7 +85,7 @@ From the PlatformIO sidebar (or the CLI, from the project root):
 pio run                       # build firmware
 pio run --target upload       # flash firmware
 pio run --target uploadfs     # build + flash the web UI (data/) to LittleFS
-pio test -e native            # host-side Baudot tests (requires GCC/G++ in PATH)
+pio test -e native -e native_winkey -e native_config  # all host-side tests
 ```
 
 Flash both the firmware and the filesystem image — the web UI lives in
@@ -93,8 +94,8 @@ firmware image.
 
 The build environment is pinned in `platformio.ini`: PlatformIO Espressif32
 7.1.3 with Arduino-ESP32 2.0.17 and exact library versions. The current verified
-release build uses 45,864 bytes of RAM (14.0%) and 968,477 bytes of its
-1,966,080-byte application slot (49.2%). Hardware testing is still required.
+release build uses 45,888 bytes of RAM (14.0%) and 968,305 bytes of its
+1,966,080-byte application slot (49.3%). Hardware testing is still required.
 
 ## Configuration
 
