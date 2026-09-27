@@ -33,6 +33,11 @@ void SendBuffer::reset() {
   endWhenBufferEmpty = true;
 }
 
+void SendBuffer::beginSession() {
+  currentShiftState_ = SHIFT_UNKNOWN;
+  lastSentBaudot_ = LTRS_SHIFT;
+}
+
 bool SendBuffer::addByte(uint8_t b) {
   if (count_ >= SEND_BUFFER_SIZE) {
     return false;

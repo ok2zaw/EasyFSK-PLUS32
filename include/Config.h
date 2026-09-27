@@ -60,14 +60,11 @@ struct Config {
   // this from changing mid-transmission (see the design doc's "no free
   // GPIO"/pin-swap and CW/Winkey sections).
   Uart2Mode uart2Mode = Uart2Mode::Fsk2;
-  // The value the CW keying engine actually uses (design doc: "not
-  // display-only"). Written by the encoder in CW-speed mode (not yet
-  // implemented in this codebase -- no encoder driver exists yet) and by
-  // the host's Winkey speed command (nonzero `nn` overwrites it; `nn==0`,
-  // "speed from potentiometer", leaves it as-is). Persisted here for now,
-  // matching the rxLevelPct/txLevelPct pattern -- whether it SHOULD survive
-  // a reboot is explicitly flagged "not yet decided" in the design doc, so
-  // treat this default as provisional, not a confirmed decision.
+  // Power-on/default CW speed: loaded into the CW engine at boot and
+  // whenever this stored value itself changes. The Winkey host's speed
+  // command (0x02) changes only the RUNNING speed and is never written back
+  // here -- that would mean a flash write per logger speed change. See the
+  // design doc's CW/Winkey "not yet decided" list (2026-09-28 entry).
   uint8_t cwSpeedWpm = 20; // Winkey's own typical factory-default speed
 };
 

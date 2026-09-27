@@ -114,6 +114,16 @@ Defaults, unsolicited status changes, WK3-command parser synchronization,
 buffer-pointer operands, Clear Buffer semantics, and temporary buffered-speed
 restoration/cancellation.
 
+Review fixes 2026-09-28: 100 host tests pass. Overlapping TX requests are now
+sequenced instead of lost: an RTTY `[text]` that arrives during the PTT/PA
+tail or during a CW session starts as the next session, CW waits behind
+RTTY, and CW resumes from its own PTT tail without dropping PTT (rules in
+`include/TxHandoff.h`, host-tested; the TxManager wiring still needs bench
+verification). Also fixed: web Send during a tail or CW session, a UART2
+mode switch from the web task racing `loop()`, config saves resetting the
+logger's CW speed, the Winkey XOFF/BUSY bits during lead-in and while CW
+waits, and the `liveLcdText` setting being ignored.
+
 Completion criterion: both UART2 modes pass host and timing tests, and the
 physical routing output always agrees with the selected mode.
 

@@ -4,6 +4,7 @@
 #include "CwTimer.h"
 #include "StatusDisplay.h"
 #include "Pins.h"
+#include "TxHandoff.h"
 #include "TxSequencer.h"
 
 #include <freertos/FreeRTOS.h>
@@ -60,6 +61,21 @@ bool s_paOutputActive = false;
 Source s_activeSource = Source::SerialLink;
 Status s_status;
 
+// An RTTY TX_ON that arrived while the transmitter was busy ending the
+// previous session (tail) or running a CW session -- see TxHandoff::onKeyUp().
+// Its text accumulates in s_sendBuffer as usual; the session itself starts
+// once PA drops (see the TailPa case). s_deferredEnd records a TX_END that
+// belongs to the deferred session, so it survives beginKeyUp() arming the
+// new session with "wait for TX_END".
+bool s_keyUpDeferred = false;
+Source s_deferredSource = Source::SerialLink;
+bool s_deferredEnd = false;
+
+void clearDeferredKeyUp() {
+  s_keyUpDeferred = false;
+  s_deferredEnd = false;
+}
+
 // Winkey's PTT lead/tail command (0x04) -- a single relay's lead/tail pair,
 // unlike RTTY's two-stage PA+PTT sequence. Mapped onto this sequencer
 // (design doc: "maps directly onto parameters this sequencer already has")
@@ -71,6 +87,10 @@ uint16_t s_cwLeadMs = 0;
 uint16_t s_cwTailMs = 0;
 
 inline bool isCwSource(Source src) { return src == Source::Winkey; }
+
+inline TxHandoff::Engine engineOf(Source src) {
+  return isCwSource(src) ? TxHandoff::Engine::Cw : TxHandoff::Engine::Fsk;
+}
 
 inline TxSequencer::Timings currentTimings() {
   if (isCwSource(s_activeSource)) {
@@ -92,6 +112,7 @@ inline void setPaOutput(bool active) {
 void updateStatus() {
   portENTER_CRITICAL(&s_statusMux);
   s_status.txActive = (s_state != State::Idle);
+  s_status.ending = (s_state == State::TailPtt || s_state == State::TailPa);
   // Physical output levels. txActive intentionally remains true through
   // both tail states, until PA has been released and cleanup is complete.
   s_status.pttActive = s_pttOutputActive;
@@ -100,6 +121,7 @@ void updateStatus() {
   s_status.bufferPending = isCwSource(s_activeSource)
                                 ? static_cast<uint16_t>(s_cwBuffer.pending())
                                 : static_cast<uint16_t>(s_sendBuffer.pending());
+  s_status.cwBufferPending = static_cast<uint16_t>(s_cwBuffer.pending());
   s_status.revision++;
   portEXIT_CRITICAL(&s_statusMux);
 }
@@ -146,6 +168,7 @@ void forceStopImmediate() {
   s_state = State::Idle;
   s_rtsSession = false;
   s_tuneActive = false;
+  clearDeferredKeyUp();
   updateStatus();
 }
 
@@ -194,11 +217,30 @@ void beginKeyUp(Source src, bool inhibitedNow) {
 void handleMessage(const TxMsg &msg, bool inhibitedNow) {
   switch (msg.type) {
     case TxMsg::Type::KeyUp:
-      beginKeyUp(msg.src, inhibitedNow);
+      switch (TxHandoff::onKeyUp(s_state, engineOf(s_activeSource), engineOf(msg.src))) {
+        case TxHandoff::KeyUpAction::Start:
+          beginKeyUp(msg.src, inhibitedNow);
+          break;
+        case TxHandoff::KeyUpAction::Ignore:
+          break; // redundant TX_ON, matches the AVR original
+        case TxHandoff::KeyUpAction::Defer:
+          // A second TX_ON before the deferred session starts is redundant
+          // too -- keep the first one's source and any TX_END already seen.
+          if (!s_keyUpDeferred && !inhibitedNow) {
+            s_keyUpDeferred = true;
+            s_deferredSource = msg.src;
+            s_deferredEnd = false;
+          }
+          break;
+      }
       break;
 
     case TxMsg::Type::BufferedEnd:
-      s_sendBuffer.endWhenBufferEmpty = true; // unconditional, matches the AVR original
+      if (s_keyUpDeferred) {
+        s_deferredEnd = true; // ends the deferred session, not the one ending now
+      } else {
+        s_sendBuffer.endWhenBufferEmpty = true; // unconditional, matches the AVR original
+      }
       break;
 
     case TxMsg::Type::Abort:
@@ -207,6 +249,7 @@ void handleMessage(const TxMsg &msg, bool inhibitedNow) {
       s_sendBuffer.reset();
       s_cwBuffer.reset();
       s_tuneActive = false;
+      clearDeferredKeyUp();
       if (s_state != State::Idle) {
         if (s_state == State::Sending) {
           if (isCwSource(s_activeSource)) {
@@ -387,7 +430,7 @@ void pumpCwEngine() {
 
   uint8_t startedAscii;
   while (CwTimer::takeCharStarted(startedAscii)) {
-    StatusDisplay::appendTxChar(startedAscii);
+    if (s_cfg.liveLcdText) StatusDisplay::appendTxChar(startedAscii);
     noteCharStarted(startedAscii);
   }
 
@@ -448,6 +491,9 @@ void taskFn(void *) {
     // (2) Drain one queued command, if any arrived within this iteration's wait.
     if (haveMsg) {
       handleMessage(msg, inhibitedNow);
+      // Keep the buffer counts current even outside Sending (e.g. during a
+      // Winkey PTT lead-in), so the host sees XOFF before the buffer fills.
+      updateStatus();
     }
 
     // (3) Advance the non-blocking PTT/PA lead-tail state machine.
@@ -512,7 +558,7 @@ void taskFn(void *) {
           }
           uint8_t startedAscii;
           while (FskTimer::takeCharStarted(startedAscii)) {
-            StatusDisplay::appendTxChar(startedAscii);
+            if (s_cfg.liveLcdText) StatusDisplay::appendTxChar(startedAscii);
             noteCharStarted(startedAscii);
           }
           if (FskTimer::takeEndOfData()) {
@@ -525,6 +571,19 @@ void taskFn(void *) {
         break;
 
       case State::TailPtt: {
+          if (!s_tuneActive &&
+              TxHandoff::resumeCwFromTail(s_state, engineOf(s_activeSource),
+                                          s_cwBuffer.peekKind() != Morse::NextKind::None)) {
+            // More CW arrived while PTT is still held: carry on keying in the
+            // same session, like a real WinKey, instead of dropping PTT and
+            // running the lead-in again for every burst of typed text.
+            CwTimer::resetForNewTx();
+            CwTimer::setActive(true);
+            s_state = State::Sending;
+            s_stateEnteredMs = nowMs;
+            updateStatus();
+            break;
+          }
           const TxSequencer::Transition transition =
               TxSequencer::poll(s_state, nowMs, s_stateEnteredMs, currentTimings());
           if (transition.event == TxSequencer::Event::ReleasePtt) {
@@ -556,11 +615,37 @@ void taskFn(void *) {
             CwTimer::resetForNewTx();
             bool wasCw = isCwSource(s_activeSource);
             if (!wasCw) {
-              s_sendBuffer.reset();
               Serial.write("\ncmd:\n"); // tells N1MM that TX is finished -- UART1 only; Winkey hosts don't speak this
             }
             s_state = transition.nextState;
             s_rtsSession = false;
+
+            // Hand over to whatever queued up while this session was ending
+            // or while the other engine was on air -- see TxHandoff.
+            bool cwWaiting = s_cwBuffer.peekKind() != Morse::NextKind::None;
+            bool inhibitNow = digitalRead(CPU_INH_PIN) == LOW;
+            switch (TxHandoff::afterTail(s_keyUpDeferred, cwWaiting)) {
+              case TxHandoff::NextSession::Fsk: {
+                Source src = s_deferredSource;
+                bool endSeen = s_deferredEnd;
+                clearDeferredKeyUp();
+                s_sendBuffer.beginSession(); // keep the waiting text, fresh shift state
+                beginKeyUp(src, inhibitNow);
+                if (endSeen) s_sendBuffer.endWhenBufferEmpty = true;
+                break;
+              }
+              case TxHandoff::NextSession::Cw:
+                if (!wasCw) s_sendBuffer.reset(); // RTTY bytes with no TX_ON of their own
+                beginKeyUp(Source::Winkey, inhibitNow);
+                break;
+              case TxHandoff::NextSession::None:
+                if (wasCw) {
+                  s_cwBuffer.reset(); // empty; also ends any buffered-speed override
+                } else {
+                  s_sendBuffer.reset();
+                }
+                break;
+            }
             updateStatus();
             // CW only: if WinkeyEmulator queued more text/side-effects DURING
             // this tail delay (a real host streams continuously, it doesn't
@@ -631,8 +716,14 @@ void begin(const Config &cfg) {
 }
 
 void applyConfig(const Config &cfg) {
+  // cwSpeedWpm is the power-on/default CW speed. The Winkey host changes the
+  // speed at run time without touching the config, so only push it to the
+  // CW engine when the configured value itself changed -- otherwise saving
+  // an unrelated setting (callsign, timing) would silently undo the
+  // logger's speed.
+  bool cwSpeedChanged = cfg.cwSpeedWpm != s_cfg.cwSpeedWpm;
   s_cfg = cfg;
-  cwSetSpeedWpm(cfg.cwSpeedWpm);
+  if (cwSpeedChanged) cwSetSpeedWpm(cfg.cwSpeedWpm);
 }
 
 bool enqueueKeyUp(Source src) {
@@ -715,7 +806,7 @@ void cwSetTuneKeyDown(bool down) {
   xQueueSend(s_queue, &m, pdMS_TO_TICKS(10));
 }
 
-uint16_t cwBufferPending() { return getStatus().bufferPending; }
+uint16_t cwBufferPending() { return getStatus().cwBufferPending; }
 
 bool cwEnqueueCancelBufferedSpeed() {
   return cwEnqueueSideEffect(Morse::SideEffect::CancelBufferedSpeed);

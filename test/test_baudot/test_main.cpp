@@ -2,6 +2,7 @@
 
 #include "Arduino.h"
 #include "Baudot.h"
+#include "TxHandoff.h"
 #include "TxSequencer.h"
 
 SerialMock Serial;
@@ -182,6 +183,72 @@ void test_tx_sequence_handles_millis_wraparound() {
                           static_cast<uint8_t>(due.event));
 }
 
+void test_begin_session_keeps_text_but_resends_shift() {
+  Baudot::SendBuffer buffer;
+  buffer.reset();
+  TEST_ASSERT_TRUE(buffer.addByte('A'));
+  TEST_ASSERT_EQUAL_UINT8(Baudot::LTRS_SHIFT, buffer.nextSymbol().baudotCode);
+  TEST_ASSERT_EQUAL_UINT8(3, buffer.nextSymbol().baudotCode);
+
+  TEST_ASSERT_TRUE(buffer.addByte('B')); // queued while the session was ending
+  buffer.beginSession();
+
+  TEST_ASSERT_EQUAL_size_t(1, buffer.pending());
+  TEST_ASSERT_EQUAL_UINT8(Baudot::LTRS_SHIFT, buffer.nextSymbol().baudotCode);
+  Baudot::QueuedSymbol payload = buffer.nextSymbol();
+  TEST_ASSERT_EQUAL_UINT8(25, payload.baudotCode);
+  TEST_ASSERT_EQUAL_UINT8('B', payload.asciiByte);
+}
+
+namespace {
+using TxHandoff::Engine;
+using TxHandoff::KeyUpAction;
+using TxHandoff::NextSession;
+using TxSequencer::State;
+
+void assertKeyUp(KeyUpAction expected, State state, Engine active, Engine requested) {
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(expected),
+                          static_cast<uint8_t>(TxHandoff::onKeyUp(state, active, requested)));
+}
+} // namespace
+
+void test_keyup_starts_when_idle() {
+  assertKeyUp(KeyUpAction::Start, State::Idle, Engine::Fsk, Engine::Fsk);
+  assertKeyUp(KeyUpAction::Start, State::Idle, Engine::Cw, Engine::Fsk);
+}
+
+void test_keyup_is_redundant_while_same_engine_is_active() {
+  assertKeyUp(KeyUpAction::Ignore, State::LeadPa, Engine::Fsk, Engine::Fsk);
+  assertKeyUp(KeyUpAction::Ignore, State::LeadPtt, Engine::Fsk, Engine::Fsk);
+  assertKeyUp(KeyUpAction::Ignore, State::Sending, Engine::Fsk, Engine::Fsk);
+}
+
+void test_keyup_during_tail_is_deferred_not_dropped() {
+  assertKeyUp(KeyUpAction::Defer, State::TailPtt, Engine::Fsk, Engine::Fsk);
+  assertKeyUp(KeyUpAction::Defer, State::TailPa, Engine::Fsk, Engine::Fsk);
+}
+
+void test_keyup_during_other_engine_session_is_deferred() {
+  assertKeyUp(KeyUpAction::Defer, State::Sending, Engine::Cw, Engine::Fsk);
+  assertKeyUp(KeyUpAction::Defer, State::LeadPtt, Engine::Cw, Engine::Fsk);
+}
+
+void test_after_tail_rtty_goes_before_waiting_cw() {
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(NextSession::Fsk),
+                          static_cast<uint8_t>(TxHandoff::afterTail(true, true)));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(NextSession::Cw),
+                          static_cast<uint8_t>(TxHandoff::afterTail(false, true)));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(NextSession::None),
+                          static_cast<uint8_t>(TxHandoff::afterTail(false, false)));
+}
+
+void test_cw_resumes_only_from_its_own_ptt_tail() {
+  TEST_ASSERT_TRUE(TxHandoff::resumeCwFromTail(State::TailPtt, Engine::Cw, true));
+  TEST_ASSERT_FALSE(TxHandoff::resumeCwFromTail(State::TailPtt, Engine::Cw, false));
+  TEST_ASSERT_FALSE(TxHandoff::resumeCwFromTail(State::TailPa, Engine::Cw, true));
+  TEST_ASSERT_FALSE(TxHandoff::resumeCwFromTail(State::TailPtt, Engine::Fsk, true));
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_empty_buffer_ends_when_requested);
@@ -195,5 +262,12 @@ int main(int, char **) {
   RUN_TEST(test_tx_tail_releases_ptt_before_pa);
   RUN_TEST(test_zero_tail_delays_still_release_in_order);
   RUN_TEST(test_tx_sequence_handles_millis_wraparound);
+  RUN_TEST(test_begin_session_keeps_text_but_resends_shift);
+  RUN_TEST(test_keyup_starts_when_idle);
+  RUN_TEST(test_keyup_is_redundant_while_same_engine_is_active);
+  RUN_TEST(test_keyup_during_tail_is_deferred_not_dropped);
+  RUN_TEST(test_keyup_during_other_engine_session_is_deferred);
+  RUN_TEST(test_after_tail_rtty_goes_before_waiting_cw);
+  RUN_TEST(test_cw_resumes_only_from_its_own_ptt_tail);
   return UNITY_END();
 }

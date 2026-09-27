@@ -104,8 +104,10 @@ void handleTxSend(AsyncWebServerRequest *request, JsonVariant &json) {
   TxManager::Status st = TxManager::getStatus();
   const char *text = json["text"] | "";
   size_t textLen = strlen(text);
+  bool appendToActive = WebTxPolicy::canAppendToActive(
+      st.txActive, st.ending, st.pttSource == TxManager::Source::Winkey);
   WebTxPolicy::Plan plan = WebTxPolicy::planSend(
-      st.inhibited, st.txActive, textLen, TxManager::commandQueueFreeSlots());
+      st.inhibited, appendToActive, textLen, TxManager::commandQueueFreeSlots());
   if (plan.decision == WebTxPolicy::Decision::Inhibited) {
     request->send(200, "application/json", "{\"ok\":false,\"reason\":\"inhibited\"}");
     return;

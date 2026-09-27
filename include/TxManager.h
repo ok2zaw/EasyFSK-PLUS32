@@ -101,11 +101,13 @@ void cwSetPttLeadTail(uint16_t leadMs, uint16_t tailMs); // Winkey 0x04, values 
 // comparing full structs.
 struct Status {
   bool txActive = false;
+  bool ending = false;  // in the PTT/PA tail: the session is over, only the relays are still held
   bool pttActive = false;
   bool paActive = false;
   bool inhibited = false;
   Source pttSource = Source::SerialLink;
-  uint16_t bufferPending = 0;
+  uint16_t bufferPending = 0;     // pending text of the ACTIVE session's engine
+  uint16_t cwBufferPending = 0;   // CW buffer, always -- for the Winkey XOFF/BUSY bits
   char lastChar = 0;   // most recent character that started transmitting
   uint32_t charSeq = 0; // increments each time lastChar changes; independent
                         // readers (LCD, WebSocket push loop) each track their

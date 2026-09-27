@@ -193,6 +193,11 @@ improvement:
   button) through one command queue, allowing only one transmission at a
   time — the AVR original only ever had one (serial), so this
   concurrency didn't exist there.
+- **Overlapping requests are sequenced, not dropped.** A new `[text]`
+  that arrives while the previous transmission is still in its PTT/PA
+  tail, or while a CW session is on air, starts as the next transmission
+  once the current one has ended. CW text arriving during its own PTT
+  tail continues keying without dropping PTT.
 - **Flash writes are refused while a transmission is active** (`ConfigStore::applyAndSave`),
   extending the AVR's existing "no I2C on the bit-timing critical path"
   discipline to flash, since an ESP32 flash write briefly disables

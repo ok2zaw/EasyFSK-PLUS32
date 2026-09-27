@@ -413,10 +413,20 @@ void test_pointer_command_consumes_operand_when_sub_op_has_one() {
   TEST_ASSERT_EQUAL_UINT8('B', mock.chars[1]);
 }
 
+void test_status_busy_while_cw_waits_behind_another_session() {
+  mock.status.txActive = true;
+  mock.status.pttSource = TxManager::Source::SerialLink; // RTTY on air
+  mock.pending = 3;                                      // CW queued behind it
+  feed(0x15);
+  TEST_ASSERT_EQUAL_HEX8(0xC4, Serial2.tx[0]);
+}
+
 void test_switch_to_fsk2_reconfigures_uart_and_routes_control_bytes() {
   Config cfg;
   cfg.uart2Mode = Uart2Mode::Fsk2;
   WinkeyEmulator::applyConfig(cfg);
+  TEST_ASSERT_EQUAL_UINT32(1200, Serial2.baud); // deferred to the owning task's poll()
+  WinkeyEmulator::poll();
 
   TEST_ASSERT_EQUAL_UINT32(9600, Serial2.baud);
   TEST_ASSERT_EQUAL_UINT32(SERIAL_8N1, Serial2.config);
@@ -443,6 +453,7 @@ void test_apply_same_mode_does_not_reopen_uart_or_reset_parser() {
   Config cfg;
   cfg.uart2Mode = Uart2Mode::Cw;
   WinkeyEmulator::applyConfig(cfg);
+  WinkeyEmulator::poll();
 
   TEST_ASSERT_EQUAL_size_t(beginCount, Serial2.beginCount);
   TEST_ASSERT_EQUAL_INT(clearCount, mock.clearCount);
@@ -474,6 +485,7 @@ int main(int, char **) {
   RUN_TEST(test_mode_and_ratio_changes_cancel_buffered_speed_override);
   RUN_TEST(test_cancel_buffered_speed_is_forwarded);
   RUN_TEST(test_pointer_command_consumes_operand_when_sub_op_has_one);
+  RUN_TEST(test_status_busy_while_cw_waits_behind_another_session);
   RUN_TEST(test_switch_to_fsk2_reconfigures_uart_and_routes_control_bytes);
   RUN_TEST(test_apply_same_mode_does_not_reopen_uart_or_reset_parser);
   return UNITY_END();

@@ -23,6 +23,18 @@ struct Plan {
   bool endSession = false;
 };
 
+// Whether web text can simply be appended to the transmission in progress
+// (like text typed into an active N1MM "[...]" session). Not during the
+// tail -- that session is already over and its buffer is about to be
+// cleared -- and not into a CW session, whose engine can't send RTTY text.
+// In those cases the web request brings its own TX_ON/TX_END and TxManager
+// starts it as the next session.
+inline bool canAppendToActive(bool txActive, bool ending, bool cwSession) {
+  return txActive && !ending && !cwSession;
+}
+
+// `txActive` here means "append to the active session" -- pass the result
+// of canAppendToActive(), not the raw TX state.
 inline Plan planSend(bool inhibited, bool txActive, size_t textLength,
                      size_t freeSlots) {
   Plan plan;

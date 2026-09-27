@@ -31,10 +31,11 @@ namespace WinkeyEmulator {
 void begin(const Config &cfg);
 
 // Call whenever the live config changes (from ConfigStore::applyAndSave(),
-// alongside its other apply-time actions) -- if uart2Mode actually changed,
-// reconfigures UART2's baud/framing and resets this module's parser state.
-// A no-op if uart2Mode is unchanged (baud doesn't need to be reset every
-// unrelated config save).
+// alongside its other apply-time actions). Safe from any task: it only
+// records the requested mode. The next poll() -- in loop(), the task that
+// owns UART2 -- then reconfigures UART2's baud/framing and resets this
+// module's parser state if uart2Mode actually changed, and does nothing if
+// it didn't (baud doesn't need to be reset every unrelated config save).
 void applyConfig(const Config &cfg);
 
 // Call once per Arduino loop() iteration, same contract as SerialControl::poll().

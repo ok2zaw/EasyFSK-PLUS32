@@ -130,6 +130,14 @@ constexpr char FSK2_TX_ABORT = '\\';
 // --- module state ---
 Uart2Mode s_mode = Uart2Mode::Fsk2;
 bool s_serial2Up = false;
+// Mode change requested by applyConfig(). ConfigStore calls that from
+// whichever task saved the config (the web server's, typically), while
+// poll() reads Serial2 from loop() -- so the actual Serial2.end()/begin()
+// and parser reset are deferred to poll(), the only code that touches the
+// port afterwards. Written mode first, flag second; poll() reads them in
+// the reverse order.
+volatile Uart2Mode s_requestedMode = Uart2Mode::Fsk2;
+volatile bool s_modeChangeRequested = false;
 
 // Winkey parser state
 bool s_hostOpen = false;
@@ -172,7 +180,11 @@ uint8_t currentStatusByte() {
   // WK2-pushbutton-flag, bit2 BUSY, bit1 BREAKIN, bit0 XOFF.
   uint8_t statusByte = 0xC0;
   TxManager::Status txStatus = TxManager::getStatus();
-  bool busy = txStatus.txActive && txStatus.pttSource == TxManager::Source::Winkey;
+  // BUSY also covers CW that is queued but not yet on air -- e.g. waiting
+  // for an RTTY session on UART1 to finish -- so the host doesn't take an
+  // idle status as "message sent".
+  bool busy = (txStatus.txActive && txStatus.pttSource == TxManager::Source::Winkey) ||
+              TxManager::cwBufferPending() > 0;
   bool xoff = TxManager::cwBufferPending() >= ((Morse::BUFFER_SIZE * 2) / 3);
   if (busy) statusByte |= 0x04;
   if (xoff) statusByte |= 0x01;
@@ -509,21 +521,29 @@ void openSerial2ForMode(Uart2Mode mode) {
 
 void begin(const Config &cfg) {
   s_mode = cfg.uart2Mode;
+  s_requestedMode = s_mode;
+  s_modeChangeRequested = false;
   openSerial2ForMode(s_mode);
   resetWinkeyParser();
   TxManager::cwSetSpeedWpm(cfg.cwSpeedWpm);
 }
 
 void applyConfig(const Config &cfg) {
-  if (cfg.uart2Mode == s_mode) {
-    return; // nothing UART2-mode-relevant changed; leave the port/parser alone
-  }
-  s_mode = cfg.uart2Mode;
-  openSerial2ForMode(s_mode);
-  resetWinkeyParser();
+  s_requestedMode = cfg.uart2Mode;
+  s_modeChangeRequested = true; // applied by the next poll(), see s_requestedMode
 }
 
 void poll() {
+  if (s_modeChangeRequested) {
+    s_modeChangeRequested = false;
+    Uart2Mode requested = s_requestedMode;
+    if (requested != s_mode) { // unchanged mode: leave the port/parser alone
+      s_mode = requested;
+      openSerial2ForMode(s_mode);
+      resetWinkeyParser();
+    }
+  }
+
   if (s_mode == Uart2Mode::Cw) {
     pollCw();
   } else {

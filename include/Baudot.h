@@ -65,6 +65,10 @@ struct QueuedSymbol {
 class SendBuffer {
 public:
   void reset();                 // mirrors resetSendBuffer() + shift-state reset
+  // Starts a new transmission for text that was queued while the previous
+  // one was still ending: fresh shift state (the receiver may have lost it
+  // between transmissions), but the waiting text is kept.
+  void beginSession();
   bool addByte(uint8_t b);      // mirrors addToSendBuffer(); false if buffer is full
   size_t pending() const { return count_; }
 

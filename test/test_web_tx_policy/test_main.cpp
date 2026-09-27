@@ -69,6 +69,13 @@ void test_empty_idle_send_still_reserves_session_brackets() {
       static_cast<uint8_t>(rejected.decision));
 }
 
+void test_append_only_to_a_running_rtty_session() {
+  TEST_ASSERT_TRUE(WebTxPolicy::canAppendToActive(true, false, false));
+  TEST_ASSERT_FALSE(WebTxPolicy::canAppendToActive(false, false, false)); // idle
+  TEST_ASSERT_FALSE(WebTxPolicy::canAppendToActive(true, true, false));  // tail
+  TEST_ASSERT_FALSE(WebTxPolicy::canAppendToActive(true, false, true));  // CW on air
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_inhibit_takes_priority_over_other_rejections);
@@ -78,5 +85,6 @@ int main(int, char **) {
   RUN_TEST(test_active_send_only_reserves_text_bytes);
   RUN_TEST(test_one_missing_queue_slot_rejects_entire_request);
   RUN_TEST(test_empty_idle_send_still_reserves_session_brackets);
+  RUN_TEST(test_append_only_to_a_running_rtty_session);
   return UNITY_END();
 }

@@ -370,8 +370,11 @@ the firmware already enforces:
     whenever the encoder changes the wiper (not edited directly through
     the Configuration form — see the routes/WS notes below for how they
     reach the UI).
-- **New for CW keying / Winkey emulation (added 2026-09-03, not yet
-  implemented in code)**:
+- **New for CW keying / Winkey emulation (added 2026-09-03; superseded
+  2026-09-27 — see "UART1/UART2 split" in the CW/Winkey section. As
+  implemented, the field is `uart2Mode: "fsk2" | "cw"` and selects UART2's
+  role; UART0/J1 always stays the RTTY link. The original text is kept
+  below for history)**:
   - `serialMode` — enum `"rtty" | "cw"`, default `"rtty"`. Selects which
     protocol UART0/J1's RXD-TXD link currently speaks — see the "CW
     keying via Winkey protocol emulation" section for why these can't
@@ -480,9 +483,12 @@ Page ↔ endpoint mapping:
 2. **TxManager task** (`TxManager.cpp`), pinned to core 1 (same as the
    timer ISR), priority `configMAX_PRIORITIES - 2`. Sole owner of the
    send buffer, PTT/PA state, and the lead/tail sequencing. A FreeRTOS
-   queue (depth 64) carries messages from three producers — serial,
-   the RTS-style hardware input, and the web Send handler — exactly per
-   the concurrency design above. PTT/PA lead-tail sequencing is the
+   queue (depth 128) carries messages from every producer — UART1 serial,
+   UART2 (FSK2 or Winkey CW), the RTS-style hardware input, and the web
+   Send handler — exactly per the concurrency design above. Only one
+   session is on air at a time; see "Session hand-off" below for what
+   happens to requests that arrive while another session is running or
+   ending. PTT/PA lead-tail sequencing is the
    non-blocking `millis()`-based state machine confirmed in the original
    design (abort/end serviced immediately even mid-lead-delay). Faithful
    ports of two AVR nuances found by re-reading the source carefully:
@@ -504,7 +510,46 @@ Page ↔ endpoint mapping:
 5. **ConfigStore** (`ConfigStore.cpp`) — mutex-protected shared `Config`,
    LittleFS + ArduinoJson v7 (`/config.json`), refuses to persist (and
    reports it via the API's `errors` shape) while a TX is active, per
-   the flash-write-during-TX rule.
+   the flash-write-during-TX rule. Apply actions that belong to another
+   task are handed over rather than executed from the saving task: CW
+   timing goes through the TxManager queue, and a UART2 mode switch is
+   performed by `WinkeyEmulator::poll()` in `loop()`, which owns UART2.
+6. **WinkeyEmulator** (`WinkeyEmulator.cpp`) — owns UART2, polled from
+   `loop()` right after SerialControl (UART1 therefore has priority).
+   In `fsk2` mode it forwards the same `[`/`]`/`\` protocol as UART1; in
+   `cw` mode it parses the Winkey host protocol and feeds TxManager's CW
+   engine (`Morse`/`CwTimer`, `FSK_PIN` used as a plain key line).
+
+**Naming note:** "UART1"/"FSK1" in the code and LCD means the primary
+logger link, which is the ESP32's hardware **UART0** (`Serial`, J1
+RXD/TXD). "UART2"/"FSK2" is `Serial2`. The labels follow the product's
+user-facing numbering, not the ESP32 peripheral numbers.
+
+### Session hand-off (implemented 2026-09-28)
+
+Producers don't wait for each other, so TxManager decides what happens to
+a request that arrives while the transmitter is busy. The rules live in
+`include/TxHandoff.h` (pure functions, host-tested):
+
+- **RTTY TX_ON during the PTT/PA tail is deferred, not dropped.** The tail
+  belongs to a session that is already over, and its buffer is cleared
+  when PA drops. A `[` arriving then (N1MM sending the next message right
+  after the previous one, or the web Send button) is remembered together
+  with a following `]`, its text is kept, and it starts as a new session,
+  with a new lead-in, as soon as PA has dropped. Before this, such a
+  message was silently lost.
+- **RTTY TX_ON during a CW session is deferred** in the same way and starts
+  after the CW session. A redundant TX_ON for the engine already on air is
+  still ignored, as in the AVR original.
+- **CW arriving during an RTTY session waits in the CW buffer** and starts
+  as the next session after RTTY. The Winkey status reports BUSY while it
+  waits. When both are waiting, RTTY goes first (UART1 priority).
+- **CW arriving during its own session's PTT tail resumes keying without
+  dropping PTT**, as a real WinKey does, instead of releasing PTT and
+  running the lead-in again for every burst of typed text.
+- **Web Send appends to the active session only while an RTTY session is
+  actually sending.** During a tail or a CW session it sends its own
+  `[text]`, which is then deferred as above.
 
 ## Implementation status (first pass, 2026-09-01)
 
@@ -1756,7 +1801,13 @@ over I2C.
   topic, same "confirmed idea, nothing built" status as the other
   `TuneMonitor`-adjacent features.
 
-## Planned feature: CW keying via Winkey protocol emulation (confirmed 2026-09-03, not started)
+## CW keying via Winkey protocol emulation (confirmed 2026-09-03, implemented 2026-09-27/28)
+
+**Status 2026-09-28:** implemented and host-tested, not yet tested against
+real logging software or hardware. The "shared UART0, mode-switched"
+decision below was superseded by the UART1/UART2 split. The protocol-level
+details are in `src/WinkeyEmulator.cpp`, and the README summarizes what the
+emulator supports.
 
 User's idea (2026-09-03): add CW (Morse) transmit capability, controlled
 by N1MM/a logger the same way it already controls real K1EL Winkey
@@ -1766,6 +1817,27 @@ before designing (K3NG keyer, the official Winkey protocol, and this
 board's own existing serial link) — see below — then the architecture
 was narrowed down through a couple of quick confirmations from the user
 into something that needs **zero new GPIO pins**.
+
+### UART1/UART2 split (decided and implemented 2026-09-27)
+
+- UART0/J1 (`Serial`, called "UART1"/"FSK1" in the product) stays the
+  always-on RTTY control link at 9600/8-N-1. It is never reconfigured.
+- UART2 (`Serial2`, GPIO15 TX / GPIO36 RX) is a second, independent input
+  with two roles selected by `uart2Mode`:
+  - `fsk2`: a second RTTY input, 9600/8-N-1, same `[`/`]`/`\` protocol,
+    tagged `FSK2` on the LCD.
+  - `cw`: Winkey host protocol, 1200/8-N-2, keying CW on `FSK_PIN`,
+    tagged `CWK`.
+- `uart2Mode` is switched from the web Configuration page, and later from
+  the encoder long-press. Like every config change, it is refused during an
+  active transmission. `MODE_SEL_PIN` follows it, but is still a stub until
+  the MCP23017 driver exists.
+- Both links feed the same TxManager queue, so RTTY and CW never transmit
+  at the same time; UART1 is polled first each `loop()` pass. See "Session
+  hand-off" in the task-architecture section for how overlapping requests
+  are sequenced.
+- The emulator reports itself as a WK2 (revision 23), because hosts enable
+  WK3-only commands for revision 30 and above.
 
 ### Research findings (verified, not assumed)
 
@@ -1863,12 +1935,12 @@ into something that needs **zero new GPIO pins**.
 ### Not yet decided (CW/Winkey)
 - Exact long-press threshold for the encoder pushbutton's mode-switch
   gesture (proposed starting point ~700-800ms) — not bench-verified.
-- How much of the Winkey command set to implement — the protocol
-  surface is sizeable (admin commands, mode register, weighting, first-
-  dit correction, key compensation, buffered vs. immediate commands,
-  prosign merging, etc.); K3NG's near-complete emulation is the
-  reference, but this project's own scope (subset vs. full) isn't
-  chosen yet.
+- ~~How much of the Winkey command set to implement~~ — **resolved
+  2026-09-28**: the full WK2 host command set is parsed with the correct
+  byte counts. Everything with a local equivalent is implemented; the rest
+  (paddle, pot, sidetone, HSCW, dit/dah ratio, pin config, buffer-pointer
+  editing, standalone messages) is accepted and ignored. Not implemented:
+  9600-baud mode (WK3 admin `0x12`) and serial echo of sent characters.
 - Which MCP23017 pin number gets `MODE_SEL_PIN` (just "the last spare
   one" so far, not assigned to a specific pin).
 - **Resolved 2026-09-03**: the encoder's "CW speed" mode adjusts
@@ -1879,11 +1951,18 @@ into something that needs **zero new GPIO pins**.
   shows on the LCD via the same live-text readout. See "LCD feedback
   while trimming RX/TX level or CW speed" above for the full mechanism
   — no longer an open question.
+- **Implemented differently, 2026-09-28 — needs the user's confirmation:**
+  the stored `cwSpeedWpm` is the **power-on/default** speed, applied at boot
+  and whenever the configured value itself changes. The host's `<02><nn>`
+  changes the **running** speed only and is not written back to the
+  config: writing it back would mean a flash write for every speed change
+  from the logger, and flash writes are refused during TX anyway. Saving
+  an unrelated setting no longer resets the running speed to the stored
+  one. Open: whether the encoder should adjust the running speed, the
+  stored default, or both. It only matters once the encoder exists.
 - Whether `cwSpeedWpm` is persisted/restored at boot like
-  `rxLevelPct`/`txLevelPct` — not yet decided (see the config-fields
-  entry above).
-- Not yet started in code — design/research only, same status as the
-  other planned `TuneMonitor`-adjacent and digipot features.
+  `rxLevelPct`/`txLevelPct` — effectively answered by the item above: the
+  stored value is the boot default, and the running speed isn't persisted.
 
 ## Not yet decided / not yet discussed
 - Whether the onboard USB chip stays populated/wired in the final build
