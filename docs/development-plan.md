@@ -10,8 +10,8 @@ future work can continue without reconstructing the plan from conversation.
 - The architecture is split into input/control, `TxManager`, Baudot/Morse
   generation, and ISR-driven FSK/CW output.
 - `ModeSelect` is still a software-only stub until the MCP23017 driver exists.
-- `README.md` contains an older GPIO/status description and must be reconciled
-  with `include/Pins.h` before hardware assembly.
+- `README.md` and `include/Pins.h` describe the same current GPIO assignment;
+  the future MCP23017/encoder reassignment remains clearly marked as planned.
 - Build environment selected in milestone 1: PlatformIO Espressif32 7.1.3,
   Arduino-ESP32 2.0.17, with exact library versions in `platformio.ini`.
 
@@ -25,7 +25,7 @@ future work can continue without reconstructing the plan from conversation.
 - [x] Keep the toolchain versions documented.
 
 Completed 2026-09-27: `pio run` succeeds. The current release build uses 45,864
-bytes of RAM (14.0%) and 968,201 bytes of the 1,966,080-byte application slot
+bytes of RAM (14.0%) and 968,477 bytes of the 1,966,080-byte application slot
 (49.2%).
 
 ### 2. Minimum RTTY firmware
@@ -35,8 +35,10 @@ bytes of RAM (14.0%) and 968,201 bytes of the 1,966,080-byte application slot
 - [x] Cancel active and queued TX work immediately on hardware inhibit.
 - [x] Make web Send/End/Abort report queue failures and prevent a missing End
   command from leaving the transmitter keyed.
-- [x] Add host-side Baudot unit tests. They are ready for CI/a host with GCC;
-  this Windows workstation currently has no `gcc`/`g++` in `PATH`.
+- [x] Add host-side Baudot and PTT/PA sequencing unit tests, including zero
+  delays and `millis()` wraparound.
+- [x] Run host tests and the ESP32 firmware build in GitHub Actions CI; this
+  Windows workstation itself currently has no `gcc`/`g++` in `PATH`.
 - [x] Add a repeatable no-radio bench-test checklist.
 - Verify UART1 to Baudot to FSK output.
 - Verify hardware inhibit, key-up, buffered end, and immediate abort.
@@ -65,7 +67,8 @@ failure mode leaves PTT/PA in the safe state.
 - Test missing, valid, and corrupt LittleFS configuration files.
 - Test web changes during RX and rejection during active TX.
 - Test Ethernet loss and reconnect.
-- Add explicit handling/reporting for full TX queues and oversized requests.
+- [x] Add explicit handling/reporting for full TX queues and oversized
+  requests.
 
 Completion criterion: configuration recovery and network failures cannot
 disturb an active transmission.

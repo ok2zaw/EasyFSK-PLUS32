@@ -4,6 +4,7 @@
 #include "CwTimer.h"
 #include "StatusDisplay.h"
 #include "Pins.h"
+#include "TxSequencer.h"
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -38,7 +39,7 @@ struct TxMsg {
   Morse::SideEffect cwEffect;
 };
 
-enum class State { Idle, LeadPa, LeadPtt, Sending, TailPtt, TailPa };
+using State = TxSequencer::State;
 
 constexpr UBaseType_t COMMAND_QUEUE_DEPTH = 128;
 
@@ -69,10 +70,12 @@ uint16_t s_cwTailMs = 0;
 
 inline bool isCwSource(Source src) { return src == Source::Winkey; }
 
-inline uint16_t currentPaLeadMs() { return isCwSource(s_activeSource) ? 0 : s_cfg.paLeadMs; }
-inline uint16_t currentPttLeadMs() { return isCwSource(s_activeSource) ? s_cwLeadMs : s_cfg.pttLeadMs; }
-inline uint16_t currentPaTailMs() { return isCwSource(s_activeSource) ? 0 : s_cfg.paTailMs; }
-inline uint16_t currentPttTailMs() { return isCwSource(s_activeSource) ? s_cwTailMs : s_cfg.pttTailMs; }
+inline TxSequencer::Timings currentTimings() {
+  if (isCwSource(s_activeSource)) {
+    return {0, s_cwLeadMs, s_cwTailMs, 0};
+  }
+  return {s_cfg.paLeadMs, s_cfg.pttLeadMs, s_cfg.pttTailMs, s_cfg.paTailMs};
+}
 
 inline void setPttOutput(bool active) {
   digitalWrite(PTT_PIN, active ? HIGH : LOW);
@@ -423,39 +426,45 @@ void taskFn(void *) {
       case State::Idle:
         break;
 
-      case State::LeadPa:
-        if (nowMs - s_stateEnteredMs >= currentPaLeadMs()) {
-          if (s_rtsSession) {
-            FskTimer::holdLow();
-          } else if (isCwSource(s_activeSource)) {
-            CwTimer::holdKeyUp();
-          } else {
-            FskTimer::holdMark();
+      case State::LeadPa: {
+          const TxSequencer::Transition transition =
+              TxSequencer::poll(s_state, nowMs, s_stateEnteredMs, currentTimings());
+          if (transition.event == TxSequencer::Event::AssertPtt) {
+            if (s_rtsSession) {
+              FskTimer::holdLow();
+            } else if (isCwSource(s_activeSource)) {
+              CwTimer::holdKeyUp();
+            } else {
+              FskTimer::holdMark();
+            }
+            setPttOutput(true);
+            digitalWrite(LED_RX_PIN, LOW);
+            StatusDisplay::refreshLine1(s_cfg.callsign, sourceLabel(s_activeSource), s_cfg.markHigh);
+            s_state = transition.nextState;
+            s_stateEnteredMs = nowMs;
+            updateStatus();
           }
-          setPttOutput(true);
-          digitalWrite(LED_RX_PIN, LOW);
-          StatusDisplay::refreshLine1(s_cfg.callsign, sourceLabel(s_activeSource), s_cfg.markHigh);
-          s_state = State::LeadPtt;
-          s_stateEnteredMs = nowMs;
-          updateStatus();
         }
         break;
 
-      case State::LeadPtt:
-        if (nowMs - s_stateEnteredMs >= currentPttLeadMs()) {
-          if (s_rtsSession) {
-            FskTimer::setActive(true, true);
-          } else if (isCwSource(s_activeSource)) {
-            CwTimer::resetForNewTx();
-            CwTimer::setActive(true);
-          } else {
-            FskTimer::resetForNewTx();
-            FskTimer::setActive(true, false);
+      case State::LeadPtt: {
+          const TxSequencer::Transition transition =
+              TxSequencer::poll(s_state, nowMs, s_stateEnteredMs, currentTimings());
+          if (transition.event == TxSequencer::Event::StartSending) {
+            if (s_rtsSession) {
+              FskTimer::setActive(true, true);
+            } else if (isCwSource(s_activeSource)) {
+              CwTimer::resetForNewTx();
+              CwTimer::setActive(true);
+            } else {
+              FskTimer::resetForNewTx();
+              FskTimer::setActive(true, false);
+            }
+            StatusDisplay::resetTxLine();
+            s_state = transition.nextState;
+            s_stateEnteredMs = nowMs;
+            updateStatus();
           }
-          StatusDisplay::resetTxLine();
-          s_state = State::Sending;
-          s_stateEnteredMs = nowMs;
-          updateStatus();
         }
         break;
 
@@ -485,51 +494,57 @@ void taskFn(void *) {
         // else: RTS-sourced session, just waiting on the RTS-poll block above
         break;
 
-      case State::TailPtt:
-        if (nowMs - s_stateEnteredMs >= currentPttTailMs()) {
-          setPttOutput(false);
-          digitalWrite(LED_RX_PIN, HIGH);
-          if (s_rtsSession) {
-            FskTimer::holdLow();
-          } else if (isCwSource(s_activeSource)) {
-            CwTimer::holdKeyUp();
-          } else {
-            FskTimer::holdSpace();
+      case State::TailPtt: {
+          const TxSequencer::Transition transition =
+              TxSequencer::poll(s_state, nowMs, s_stateEnteredMs, currentTimings());
+          if (transition.event == TxSequencer::Event::ReleasePtt) {
+            setPttOutput(false);
+            digitalWrite(LED_RX_PIN, HIGH);
+            if (s_rtsSession) {
+              FskTimer::holdLow();
+            } else if (isCwSource(s_activeSource)) {
+              CwTimer::holdKeyUp();
+            } else {
+              FskTimer::holdSpace();
+            }
+            s_state = transition.nextState;
+            s_stateEnteredMs = nowMs;
+            updateStatus();
           }
-          s_state = State::TailPa;
-          s_stateEnteredMs = nowMs;
-          updateStatus();
         }
         break;
 
-      case State::TailPa:
-        if (nowMs - s_stateEnteredMs >= currentPaTailMs()) {
-          setPaOutput(false);
-          bool stillInhibited = (digitalRead(CPU_INH_PIN) == LOW);
-          StatusDisplay::showStatus(stillInhibited ? "INHIBIT" : "RX");
-          StatusDisplay::resetTxLine();
-          FskTimer::resetForNewTx();
-          CwTimer::resetForNewTx();
-          bool wasCw = isCwSource(s_activeSource);
-          if (!wasCw) {
-            s_sendBuffer.reset();
-            Serial.write("\ncmd:\n"); // tells N1MM that TX is finished -- UART1 only; Winkey hosts don't speak this
-          }
-          s_state = State::Idle;
-          s_rtsSession = false;
-          updateStatus();
-          // CW only: if WinkeyEmulator queued more text/side-effects DURING
-          // this tail delay (a real host streams continuously, it doesn't
-          // wait for our PTT timing), don't drop it as a dead session --
-          // start a fresh lead-in for it immediately, same as a real Winkey
-          // keyer keeping PTT engaged across closely-spaced text rather
-          // than chopping it into fragments. Only truly reset the CW buffer
-          // once it's confirmed empty.
-          if (wasCw) {
-            if (s_cwBuffer.peekKind() != Morse::NextKind::None) {
-              beginKeyUp(Source::Winkey, digitalRead(CPU_INH_PIN) == LOW);
-            } else {
-              s_cwBuffer.reset();
+      case State::TailPa: {
+          const TxSequencer::Transition transition =
+              TxSequencer::poll(s_state, nowMs, s_stateEnteredMs, currentTimings());
+          if (transition.event == TxSequencer::Event::ReleasePa) {
+            setPaOutput(false);
+            bool stillInhibited = (digitalRead(CPU_INH_PIN) == LOW);
+            StatusDisplay::showStatus(stillInhibited ? "INHIBIT" : "RX");
+            StatusDisplay::resetTxLine();
+            FskTimer::resetForNewTx();
+            CwTimer::resetForNewTx();
+            bool wasCw = isCwSource(s_activeSource);
+            if (!wasCw) {
+              s_sendBuffer.reset();
+              Serial.write("\ncmd:\n"); // tells N1MM that TX is finished -- UART1 only; Winkey hosts don't speak this
+            }
+            s_state = transition.nextState;
+            s_rtsSession = false;
+            updateStatus();
+            // CW only: if WinkeyEmulator queued more text/side-effects DURING
+            // this tail delay (a real host streams continuously, it doesn't
+            // wait for our PTT timing), don't drop it as a dead session --
+            // start a fresh lead-in for it immediately, same as a real Winkey
+            // keyer keeping PTT engaged across closely-spaced text rather
+            // than chopping it into fragments. Only truly reset the CW buffer
+            // once it's confirmed empty.
+            if (wasCw) {
+              if (s_cwBuffer.peekKind() != Morse::NextKind::None) {
+                beginKeyUp(Source::Winkey, digitalRead(CPU_INH_PIN) == LOW);
+              } else {
+                s_cwBuffer.reset();
+              }
             }
           }
         }

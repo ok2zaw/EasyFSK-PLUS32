@@ -93,7 +93,7 @@ firmware image.
 
 The build environment is pinned in `platformio.ini`: PlatformIO Espressif32
 7.1.3 with Arduino-ESP32 2.0.17 and exact library versions. The current verified
-release build uses 45,864 bytes of RAM (14.0%) and 968,201 bytes of its
+release build uses 45,864 bytes of RAM (14.0%) and 968,477 bytes of its
 1,966,080-byte application slot (49.2%). Hardware testing is still required.
 
 ## Configuration

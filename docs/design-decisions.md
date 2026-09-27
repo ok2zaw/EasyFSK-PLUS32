@@ -73,7 +73,7 @@ FSK/PTT bit-timing discipline, and add wired LAN.
   an OTA-capable partition scheme (two ~1.9MB app slots + a small
   LittleFS partition for `/config.json`) from the start as cheap
   insurance — even before OTA itself is implemented, since the flash is
-  there either way. The current verified release build uses 968,201 bytes of
+  there either way. The current verified release build uses 968,477 bytes of
   its 1,966,080-byte application slot (49.2%) and 45,864 bytes of RAM
   (14.0%). 16MB-revision boards stay fully compatible (just unused
   headroom), so one firmware build target covers both revisions.
