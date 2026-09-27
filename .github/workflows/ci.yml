@@ -24,6 +24,7 @@ jobs:
         run: python -m pip install platformio==6.2.0
 
       - name: Run host-side unit tests
+        id: native_tests
         run: |
           set -o pipefail
           pio test -e native 2>&1 | tee native-test.log
@@ -37,6 +38,13 @@ jobs:
             cat native-test.log 2>/dev/null || echo "Test log was not created."
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "${{ steps.native_tests.outcome }}" == "failure" ]]; then
+            diagnostic="$(tail -c 12000 native-test.log)"
+            diagnostic="${diagnostic//'%'/'%25'}"
+            diagnostic="${diagnostic//$'\r'/'%0D'}"
+            diagnostic="${diagnostic//$'\n'/'%0A'}"
+            echo "::error title=Native unit tests failed::$diagnostic"
+          fi
 
       - name: Build ESP32 firmware
         if: always()
