@@ -8,6 +8,7 @@
 #include "FskTimer.h"
 #include "ModeSelect.h"
 #include "TxManager.h"
+#include "WebConfigApi.h"
 #include "WinkeyEmulator.h"
 
 LittleFSMock LittleFS;
@@ -179,6 +180,76 @@ void test_storage_failure_does_not_change_or_apply_live_config() {
   TEST_ASSERT_EQUAL_INT(0, mock.modeSelectCount);
 }
 
+void test_web_api_success_returns_saved_live_configuration() {
+  JsonDocument input;
+  input["callsign"] = "OK2ZAW";
+  input["uart2Mode"] = "cw";
+  input["cwSpeedWpm"] = 28;
+  JsonDocument responseDoc;
+
+  int status = WebConfigApi::apply(
+      input.as<JsonVariantConst>(), responseDoc.to<JsonObject>());
+
+  TEST_ASSERT_EQUAL_INT(200, status);
+  TEST_ASSERT_TRUE(responseDoc["ok"].as<bool>());
+  TEST_ASSERT_EQUAL_STRING("OK2ZAW",
+                           responseDoc["config"]["callsign"].as<const char *>());
+  TEST_ASSERT_EQUAL_STRING("cw",
+                           responseDoc["config"]["uart2Mode"].as<const char *>());
+  TEST_ASSERT_EQUAL_UINT8(28, responseDoc["config"]["cwSpeedWpm"].as<uint8_t>());
+  TEST_ASSERT_TRUE(LittleFS.fileExists);
+  TEST_ASSERT_EQUAL_INT(1, mock.txApplyCount);
+}
+
+void test_web_api_validation_error_returns_field_errors_without_save() {
+  JsonDocument input;
+  input["cwSpeedWpm"] = 100;
+  JsonDocument responseDoc;
+
+  int status = WebConfigApi::apply(
+      input.as<JsonVariantConst>(), responseDoc.to<JsonObject>());
+
+  TEST_ASSERT_EQUAL_INT(400, status);
+  TEST_ASSERT_FALSE(responseDoc["ok"].as<bool>());
+  TEST_ASSERT_TRUE(responseDoc["errors"]["cwSpeedWpm"].is<const char *>());
+  TEST_ASSERT_FALSE(LittleFS.fileExists);
+  TEST_ASSERT_EQUAL_INT(0, mock.txApplyCount);
+}
+
+void test_web_api_active_tx_returns_deferred_response() {
+  mock.status.txActive = true;
+  JsonDocument input;
+  input["callsign"] = "BUSY";
+  JsonDocument responseDoc;
+
+  int status = WebConfigApi::apply(
+      input.as<JsonVariantConst>(), responseDoc.to<JsonObject>());
+
+  TEST_ASSERT_EQUAL_INT(200, status);
+  TEST_ASSERT_FALSE(responseDoc["ok"].as<bool>());
+  TEST_ASSERT_TRUE(responseDoc["deferred"].as<bool>());
+  TEST_ASSERT_TRUE(responseDoc["message"].is<const char *>());
+  TEST_ASSERT_FALSE(LittleFS.fileExists);
+  TEST_ASSERT_EQUAL_INT(0, mock.txApplyCount);
+}
+
+void test_web_api_storage_failure_returns_500_without_live_change() {
+  LittleFS.allowWrite = false;
+  JsonDocument input;
+  input["callsign"] = "NEW";
+  JsonDocument responseDoc;
+
+  int status = WebConfigApi::apply(
+      input.as<JsonVariantConst>(), responseDoc.to<JsonObject>());
+
+  TEST_ASSERT_EQUAL_INT(500, status);
+  TEST_ASSERT_FALSE(responseDoc["ok"].as<bool>());
+  TEST_ASSERT_EQUAL_STRING("storage_error",
+                           responseDoc["reason"].as<const char *>());
+  TEST_ASSERT_EQUAL_STRING("", ConfigStore::get().callsign);
+  TEST_ASSERT_EQUAL_INT(0, mock.txApplyCount);
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_begin_loads_defaults_when_file_is_missing);
@@ -186,5 +257,9 @@ int main(int, char **) {
   RUN_TEST(test_active_tx_rejects_update_without_save_or_live_change);
   RUN_TEST(test_invalid_update_is_rejected_before_tx_or_storage_checks);
   RUN_TEST(test_storage_failure_does_not_change_or_apply_live_config);
+  RUN_TEST(test_web_api_success_returns_saved_live_configuration);
+  RUN_TEST(test_web_api_validation_error_returns_field_errors_without_save);
+  RUN_TEST(test_web_api_active_tx_returns_deferred_response);
+  RUN_TEST(test_web_api_storage_failure_returns_500_without_live_change);
   return UNITY_END();
 }

@@ -3,7 +3,7 @@
 #include "ConfigStore.h"
 #include "FskTimer.h"
 #include "Version.h"
-#include "WebConfigResponse.h"
+#include "WebConfigApi.h"
 #include "WebTxPolicy.h"
 
 #include <ESPAsyncWebServer.h>
@@ -48,15 +48,6 @@ void buildStatusJson(JsonObject obj) {
   obj["bufferPending"] = st.bufferPending;
 }
 
-void buildErrorsResponse(JsonObject errors, AsyncWebServerRequest *request) {
-  WebConfigResponse::Kind kind = WebConfigResponse::classify(errors);
-  JsonDocument doc;
-  WebConfigResponse::buildBody(kind, errors, doc.to<JsonObject>());
-  String body;
-  serializeJson(doc, body);
-  request->send(WebConfigResponse::statusCode(kind), "application/json", body);
-}
-
 void handleGetConfig(AsyncWebServerRequest *request) {
   JsonDocument doc;
   JsonObject root = doc.to<JsonObject>();
@@ -67,19 +58,11 @@ void handleGetConfig(AsyncWebServerRequest *request) {
 }
 
 void handlePostConfig(AsyncWebServerRequest *request, JsonVariant &json) {
-  JsonDocument errDoc;
-  JsonObject errs = errDoc.to<JsonObject>();
-  if (ConfigStore::applyAndSave(json, errs)) {
-    JsonDocument doc;
-    doc["ok"] = true;
-    JsonObject cfgObj = doc["config"].to<JsonObject>();
-    configToJson(ConfigStore::get(), cfgObj);
-    String body;
-    serializeJson(doc, body);
-    request->send(200, "application/json", body);
-  } else {
-    buildErrorsResponse(errs, request);
-  }
+  JsonDocument doc;
+  int statusCode = WebConfigApi::apply(json, doc.to<JsonObject>());
+  String body;
+  serializeJson(doc, body);
+  request->send(statusCode, "application/json", body);
 }
 
 void handleConfigBackup(AsyncWebServerRequest *request) {

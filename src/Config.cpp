@@ -85,7 +85,10 @@ static bool isValidHostname(const char *s, size_t len) {
 // --- public API --------------------------------------------------------------
 
 void configToJson(const Config &cfg, JsonObject out) {
-  out["callsign"] = cfg.callsign;
+  // A const char array looks like a string literal to ArduinoJson, which would
+  // store only its address. Cast runtime buffers to pointers so the document
+  // owns a copy even when `cfg` is a temporary returned by ConfigStore::get().
+  out["callsign"] = static_cast<const char *>(cfg.callsign);
   out["baudRate"] = cfg.baudRate;
   out["polarity"] = cfg.markHigh ? "markHigh" : "markLow";
   out["pttLeadMs"] = cfg.pttLeadMs;
@@ -97,12 +100,12 @@ void configToJson(const Config &cfg, JsonObject out) {
   out["cwSpeedWpm"] = cfg.cwSpeedWpm;
 
   JsonObject net = out["network"].to<JsonObject>();
-  net["hostname"] = cfg.network.hostname;
+  net["hostname"] = static_cast<const char *>(cfg.network.hostname);
   net["dhcp"] = cfg.network.dhcp;
-  net["staticIp"] = cfg.network.staticIp;
-  net["gateway"] = cfg.network.gateway;
-  net["subnet"] = cfg.network.subnet;
-  net["dns"] = cfg.network.dns;
+  net["staticIp"] = static_cast<const char *>(cfg.network.staticIp);
+  net["gateway"] = static_cast<const char *>(cfg.network.gateway);
+  net["subnet"] = static_cast<const char *>(cfg.network.subnet);
+  net["dns"] = static_cast<const char *>(cfg.network.dns);
 }
 
 static bool configMerge(JsonVariantConst in, Config &out, JsonObject errors,
