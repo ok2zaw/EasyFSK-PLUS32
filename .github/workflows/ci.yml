@@ -24,7 +24,20 @@ jobs:
         run: python -m pip install platformio==6.2.0
 
       - name: Run host-side unit tests
-        run: pio test -e native
+        run: |
+          set -o pipefail
+          pio test -e native 2>&1 | tee native-test.log
+
+      - name: Publish unit-test diagnostics
+        if: always()
+        run: |
+          {
+            echo "### Native unit-test output"
+            echo '```text'
+            cat native-test.log 2>/dev/null || echo "Test log was not created."
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build ESP32 firmware
+        if: always()
         run: pio run -e impero32
