@@ -3,6 +3,8 @@
 #include "ConfigStore.h"
 #include "FskTimer.h"
 #include "Version.h"
+#include "WebConfigResponse.h"
+#include "WebTxPolicy.h"
 
 #include <ESPAsyncWebServer.h>
 #include <AsyncJson.h>
@@ -47,24 +49,12 @@ void buildStatusJson(JsonObject obj) {
 }
 
 void buildErrorsResponse(JsonObject errors, AsyncWebServerRequest *request) {
-  if (errors["_"].is<const char *>()) {
-    // Special-cased "a TX is active" refusal from ConfigStore -- surfaced
-    // as `deferred` per the design doc, not a per-field validation error.
-    JsonDocument doc;
-    doc["ok"] = false;
-    doc["deferred"] = true;
-    doc["message"] = errors["_"];
-    String body;
-    serializeJson(doc, body);
-    request->send(200, "application/json", body);
-    return;
-  }
+  WebConfigResponse::Kind kind = WebConfigResponse::classify(errors);
   JsonDocument doc;
-  doc["ok"] = false;
-  doc["errors"] = errors;
+  WebConfigResponse::buildBody(kind, errors, doc.to<JsonObject>());
   String body;
   serializeJson(doc, body);
-  request->send(400, "application/json", body);
+  request->send(WebConfigResponse::statusCode(kind), "application/json", body);
 }
 
 void handleGetConfig(AsyncWebServerRequest *request) {
@@ -129,28 +119,28 @@ void handleGetSystem(AsyncWebServerRequest *request) {
 
 void handleTxSend(AsyncWebServerRequest *request, JsonVariant &json) {
   TxManager::Status st = TxManager::getStatus();
-  if (st.inhibited) {
+  const char *text = json["text"] | "";
+  size_t textLen = strlen(text);
+  WebTxPolicy::Plan plan = WebTxPolicy::planSend(
+      st.inhibited, st.txActive, textLen, TxManager::commandQueueFreeSlots());
+  if (plan.decision == WebTxPolicy::Decision::Inhibited) {
     request->send(200, "application/json", "{\"ok\":false,\"reason\":\"inhibited\"}");
     return;
   }
-  const char *text = json["text"] | "";
-  bool wasIdle = !st.txActive;
-  size_t textLen = strlen(text);
-  size_t requiredSlots = textLen + (wasIdle ? 2u : 0u); // KeyUp + text + End
-  if (textLen > 120) {
+  if (plan.decision == WebTxPolicy::Decision::TextTooLong) {
     request->send(400, "application/json", "{\"ok\":false,\"reason\":\"text_too_long\",\"maxLength\":120}");
     return;
   }
-  if (requiredSlots > TxManager::commandQueueFreeSlots()) {
+  if (plan.decision == WebTxPolicy::Decision::QueueFull) {
     request->send(503, "application/json", "{\"ok\":false,\"reason\":\"tx_queue_full\"}");
     return;
   }
 
-  bool queued = !wasIdle || TxManager::enqueueKeyUp(TxManager::Source::Web);
+  bool queued = !plan.startSession || TxManager::enqueueKeyUp(TxManager::Source::Web);
   for (const char *p = text; *p != '\0'; p++) {
     queued = queued && TxManager::enqueueByte(static_cast<uint8_t>(*p), TxManager::Source::Web);
   }
-  if (wasIdle) {
+  if (plan.endSession) {
     queued = queued && TxManager::enqueueBufferedEnd(); // idle Send behaves like a self-contained [text]
   }
   if (!queued) {

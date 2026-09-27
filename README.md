@@ -85,7 +85,7 @@ From the PlatformIO sidebar (or the CLI, from the project root):
 pio run                       # build firmware
 pio run --target upload       # flash firmware
 pio run --target uploadfs     # build + flash the web UI (data/) to LittleFS
-pio test -e native -e native_winkey -e native_config  # all host-side tests
+pio test -e native -e native_winkey -e native_config -e native_config_store
 ```
 
 Flash both the firmware and the filesystem image — the web UI lives in
@@ -94,8 +94,8 @@ firmware image.
 
 The build environment is pinned in `platformio.ini`: PlatformIO Espressif32
 7.1.3 with Arduino-ESP32 2.0.17 and exact library versions. The current verified
-release build uses 45,888 bytes of RAM (14.0%) and 968,305 bytes of its
-1,966,080-byte application slot (49.3%). Hardware testing is still required.
+release build uses 45,888 bytes of RAM (14.0%) and 970,345 bytes of its
+1,966,080-byte application slot (49.4%). Hardware testing is still required.
 
 ## Configuration
 
@@ -106,6 +106,15 @@ network) are stored as JSON at `/config.json` on LittleFS, editable via:
 - The serial `~` configuration menu, same command letters as the AVR
   original (`0`/`1` polarity, `4`/`5`/`7` baud, `L`/`T`/`l`/`t` PTT/PA
   lead/tail, `C` callsign, `D`/`d` live LCD text, `?` show current config).
+
+Configuration saves are transactional: firmware writes and verifies
+`/config.tmp` before atomically replacing `/config.json`. A short write or
+rename failure therefore leaves both the running configuration and the last
+valid persisted configuration unchanged.
+
+Radio timing, polarity, UART2 mode, and CW speed changes are applied live while
+idle. Network hostname/DHCP/static-address changes are persisted immediately
+but take effect after the next restart or power cycle.
 
 The web UI also has a **Backup / Restore** tab to download/upload
 `config.json` directly.

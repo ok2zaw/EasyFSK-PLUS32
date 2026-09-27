@@ -367,22 +367,22 @@
       <div class="row">
         <div class="field">
           <label for="pttLeadMs">PTT lead (ms)</label>
-          <input type="number" id="pttLeadMs" min="0" max="9999">
+          <input type="number" id="pttLeadMs" min="0" max="9999" required>
           <div class="hint">Time the main relay is keyed before the first start bit. 0–9999ms.</div>
         </div>
         <div class="field">
           <label for="pttTailMs">PTT tail (ms)</label>
-          <input type="number" id="pttTailMs" min="0" max="9999">
+          <input type="number" id="pttTailMs" min="0" max="9999" required>
           <div class="hint">Time the main relay stays keyed after the last stop bit. 0–9999ms.</div>
         </div>
         <div class="field">
           <label for="paLeadMs">PA lead (ms)</label>
-          <input type="number" id="paLeadMs" min="0" max="9999">
+          <input type="number" id="paLeadMs" min="0" max="9999" required>
           <div class="hint">Amplifier-stage relay lead, before the main relay engages. 0–9999ms.</div>
         </div>
         <div class="field">
           <label for="paTailMs">PA tail (ms)</label>
-          <input type="number" id="paTailMs" min="0" max="9999">
+          <input type="number" id="paTailMs" min="0" max="9999" required>
           <div class="hint">Amplifier-stage relay tail, after the main relay releases. 0–9999ms.</div>
         </div>
       </div>
@@ -392,12 +392,30 @@
         <div class="hint">Disable only if you notice this affecting timing on very slow displays.</div>
       </div>
 
+      <h2>UART2 / CW</h2>
+      <div class="row">
+        <div class="field">
+          <label for="uart2Mode">UART2 mode</label>
+          <select id="uart2Mode">
+            <option value="fsk2">FSK2 / RTTY (9600, 8-N-1)</option>
+            <option value="cw">Winkey CW (1200, 8-N-2)</option>
+          </select>
+          <div class="hint">Changes UART2 framing immediately. Physical CW/FSK routing still requires the planned MCP23017 output.</div>
+        </div>
+        <div class="field">
+          <label for="cwSpeedWpm">CW speed (WPM)</label>
+          <input type="number" id="cwSpeedWpm" min="5" max="99" required>
+          <div class="hint">Initial keying speed used by the Winkey/CW engine. Range 5-99 WPM.</div>
+        </div>
+      </div>
+
       <h2>Network</h2>
       <div class="row">
         <div class="field">
           <label for="hostname">Hostname</label>
-          <input type="text" id="hostname" maxlength="31">
-          <div class="hint">Letters, digits and hyphens only.</div>
+          <input type="text" id="hostname" maxlength="31" required
+                 pattern="[A-Za-z0-9](?:[A-Za-z0-9-]{0,29}[A-Za-z0-9])?">
+          <div class="hint">Letters, digits and hyphens only. Network changes take effect after restart.</div>
         </div>
         <div class="field">
           <label><input type="checkbox" id="dhcp">Use DHCP</label>
@@ -492,6 +510,7 @@
   // ---- config load/save ----
   var dhcpCheckbox = document.getElementById('dhcp');
   var staticFields = document.getElementById('staticFields');
+  var loadedNetworkJson = '';
   function updateStaticFieldsVisibility() {
     staticFields.style.display = dhcpCheckbox.checked ? 'none' : 'flex';
   }
@@ -506,6 +525,8 @@
     document.getElementById('paLeadMs').value = cfg.paLeadMs;
     document.getElementById('paTailMs').value = cfg.paTailMs;
     document.getElementById('liveLcdText').checked = !!cfg.liveLcdText;
+    document.getElementById('uart2Mode').value = cfg.uart2Mode || 'fsk2';
+    document.getElementById('cwSpeedWpm').value = cfg.cwSpeedWpm || 20;
     var net = cfg.network || {};
     document.getElementById('hostname').value = net.hostname || '';
     dhcpCheckbox.checked = !!net.dhcp;
@@ -513,6 +534,7 @@
     document.getElementById('gateway').value = net.gateway || '';
     document.getElementById('subnet').value = net.subnet || '';
     document.getElementById('dns').value = net.dns || '';
+    loadedNetworkJson = JSON.stringify(net);
     updateStaticFieldsVisibility();
     document.getElementById('stCallsign').textContent = cfg.callsign || '(not set)';
   }
@@ -533,6 +555,8 @@
       paLeadMs: parseInt(document.getElementById('paLeadMs').value, 10),
       paTailMs: parseInt(document.getElementById('paTailMs').value, 10),
       liveLcdText: document.getElementById('liveLcdText').checked,
+      uart2Mode: document.getElementById('uart2Mode').value,
+      cwSpeedWpm: parseInt(document.getElementById('cwSpeedWpm').value, 10),
       network: {
         hostname: document.getElementById('hostname').value,
         dhcp: dhcpCheckbox.checked,
@@ -542,6 +566,7 @@
         dns: document.getElementById('dns').value
       }
     };
+    var networkChanged = JSON.stringify(body.network) !== loadedNetworkJson;
     var msgEl = document.getElementById('configMsg');
     fetch('/api/config', {
       method: 'POST',
@@ -549,10 +574,12 @@
       body: JSON.stringify(body)
     }).then(function (r) { return r.json(); }).then(function (data) {
       if (data.ok) {
-        showMsg(msgEl, 'Saved.', true);
+        showMsg(msgEl, networkChanged ? 'Saved. Restart to apply network changes.' : 'Saved.', true);
         fillConfigForm(data.config);
       } else if (data.deferred) {
         showMsg(msgEl, data.message || 'Will save once TX ends.', false);
+      } else if (data.reason === 'storage_error') {
+        showMsg(msgEl, data.message || 'Could not write configuration storage.', false);
       } else {
         var parts = [];
         if (data.errors) {

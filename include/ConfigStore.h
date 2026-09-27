@@ -24,11 +24,11 @@ void begin();
 Config get();
 
 // Validates `in` (see Config.h configValidate()), and if valid AND no
-// transmission is currently active, applies it live (TxManager::applyConfig,
-// FskTimer::reconfigure) and persists it to LittleFS. `errors` and `out`
-// behave as in configValidate(); additionally, if validation succeeds but a
-// TX is in progress, returns false and errors["_"] explains that nothing
-// was saved because a transmission is active.
+// transmission is currently active, persists it to LittleFS and then applies
+// it live (TxManager::applyConfig, FskTimer::reconfigure). Persistence happens
+// first so a storage failure cannot change only the running configuration.
+// `errors` behaves as in configValidate(); additionally, errors["_"] reports
+// an active-TX refusal and errors["storage"] reports a persistence failure.
 bool applyAndSave(JsonVariantConst in, JsonObject errors);
 
 } // namespace ConfigStore

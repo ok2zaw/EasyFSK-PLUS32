@@ -47,6 +47,15 @@ bool applyAndSave(JsonVariantConst in, JsonObject errors) {
     return false;
   }
 
+  // Persist first so a flash/open/write failure cannot leave the running
+  // configuration changed while the reboot-persistent configuration remains
+  // old. All live apply functions below are void and cannot fail.
+  if (!configSave(candidate)) {
+    errors["storage"] = "failed to persist configuration";
+    xSemaphoreGive(s_mutex);
+    return false;
+  }
+
   s_cfg = candidate;
   TxManager::applyConfig(s_cfg);
   FskTimer::reconfigure(s_cfg.baudRate, s_cfg.markHigh);
@@ -57,10 +66,9 @@ bool applyAndSave(JsonVariantConst in, JsonObject errors) {
   // "UART1/UART2 split" and MODE_SEL_PIN sections.
   WinkeyEmulator::applyConfig(s_cfg);
   ModeSelect::setActive(s_cfg.uart2Mode == Uart2Mode::Cw);
-  bool saved = configSave(s_cfg);
 
   xSemaphoreGive(s_mutex);
-  return saved;
+  return true;
 }
 
 } // namespace ConfigStore

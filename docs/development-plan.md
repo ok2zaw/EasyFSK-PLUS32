@@ -16,7 +16,9 @@ future work can continue without reconstructing the plan from conversation.
   Arduino-ESP32 2.0.17, with exact library versions in `platformio.ini`.
 - Native tests run locally with WinLibs GCC/G++ 16.1.0 and in GitHub Actions;
   the current suite covers Baudot, TX sequencing, Morse generation, the
-  UART2/Winkey parser, and configuration validation/load/save behavior.
+  UART2/Winkey parser, configuration validation/load/save behavior, guarded
+  live configuration updates, web TX queue admission, and critical web-form
+  bindings.
 
 ## Implementation order
 
@@ -27,9 +29,9 @@ future work can continue without reconstructing the plan from conversation.
 - [x] Obtain a clean firmware build and record the resulting resource usage.
 - [x] Keep the toolchain versions documented.
 
-Completed 2026-09-27: `pio run` succeeds. The current release build uses 45,888
-bytes of RAM (14.0%) and 968,305 bytes of the 1,966,080-byte application slot
-(49.3%).
+Verified 2026-09-28: `pio run` succeeds. The current release build uses 45,888
+bytes of RAM (14.0%) and 970,345 bytes of the 1,966,080-byte application slot
+(49.4%).
 
 ### 2. Minimum RTTY firmware
 
@@ -69,7 +71,10 @@ failure mode leaves PTT/PA in the safe state.
 
 - [x] Test missing, valid, corrupt, and partly invalid LittleFS configuration
   files with a host-side filesystem double.
-- Test web changes during RX and rejection during active TX.
+- [x] Test configuration apply/save while idle and rejection during active TX
+  through `ConfigStore`; test storage failures without changing live state.
+- Test the actual HTTP config handlers and responses with a web-server test
+  harness.
 - Test Ethernet loss and reconnect.
 - [x] Add explicit handling/reporting for full TX queues and oversized
   requests.
@@ -86,13 +91,24 @@ disturb an active transmission.
 - Implement physical mode routing through MCP23017 and replace the
   `ModeSelect` stub.
 
-Host-test update 2026-09-27: 47 tests pass across the native, native-Winkey,
-and native-config environments. The new Morse tests also fixed complete
-word-gap timing, terminal generator-state reporting, and timing changes that
-previously could split an in-flight character between old and new settings.
-Configuration tests fixed per-field recovery from a partly invalid persisted
-JSON file while preserving transactional validation for live API updates.
-Native test builds treat all compiler warnings as errors.
+Host-test update 2026-09-28: 72 tests pass across the native, native-Winkey,
+native-config, and native-config-store environments. The new Morse tests also
+fixed complete word-gap timing, terminal generator-state reporting, and timing
+changes that previously could split an in-flight character between old and new
+settings. Configuration tests fixed per-field recovery from a partly invalid
+persisted JSON file while preserving transactional validation for live API
+updates. ConfigStore tests now guarantee that active TX and storage failures
+cannot change live configuration. The web TX admission policy is also tested
+at its text-length and queue-capacity boundaries. Persisted configuration now
+uses a verified temporary file plus atomic rename; partial-write and rename
+failure tests confirm that the previous file survives. Native test builds
+treat all compiler warnings as errors. Web UI integration checks ensure the
+UART2 mode and CW-speed controls remain wired to both config load and save,
+and that network-restart/storage-error messages remain visible. Configuration
+validation now rejects wrong JSON types and hostnames that start or end with a
+hyphen. The shared HTTP configuration-response builder is tested for deferred
+updates, per-field validation errors, persistence failures, and their status
+codes.
 
 Completion criterion: both UART2 modes pass host and timing tests, and the
 physical routing output always agrees with the selected mode.

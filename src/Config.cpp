@@ -3,6 +3,7 @@
 #include <cstdio>
 
 static const char *CONFIG_PATH = "/config.json";
+static const char *CONFIG_TEMP_PATH = "/config.tmp";
 
 // --- small validation helpers -----------------------------------------------
 
@@ -63,6 +64,15 @@ static bool isValidCwSpeedWpm(long v) {
 
 static bool isValidHostname(const char *s, size_t len) {
   if (len == 0 || len > CfgLimits::HOSTNAME_MAX_LEN) return false;
+  if (!((s[0] >= 'a' && s[0] <= 'z') || (s[0] >= 'A' && s[0] <= 'Z') ||
+        (s[0] >= '0' && s[0] <= '9'))) {
+    return false;
+  }
+  char last = s[len - 1];
+  if (!((last >= 'a' && last <= 'z') || (last >= 'A' && last <= 'Z') ||
+        (last >= '0' && last <= '9'))) {
+    return false;
+  }
   for (size_t i = 0; i < len; i++) {
     char c = s[i];
     bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
@@ -100,21 +110,31 @@ static bool configMerge(JsonVariantConst in, Config &out, JsonObject errors,
   Config result = out; // start from current values; only overwrite fields present in `in`
   bool ok = true;
 
-  if (in["callsign"].is<const char *>()) {
-    const char *cs = in["callsign"].as<const char *>();
-    size_t len = strlen(cs);
-    if (isValidCallsign(cs, len)) {
-      strncpy(result.callsign, cs, sizeof(result.callsign) - 1);
-      result.callsign[sizeof(result.callsign) - 1] = '\0';
+  JsonVariantConst callsign = in["callsign"];
+  if (!callsign.isNull()) {
+    if (callsign.is<const char *>()) {
+      const char *cs = callsign.as<const char *>();
+      size_t len = strlen(cs);
+      if (isValidCallsign(cs, len)) {
+        strncpy(result.callsign, cs, sizeof(result.callsign) - 1);
+        result.callsign[sizeof(result.callsign) - 1] = '\0';
+      } else {
+        errors["callsign"] = "must be at most 6 printable ASCII characters";
+        ok = false;
+      }
     } else {
-      errors["callsign"] = "must be at most 6 printable ASCII characters";
+      errors["callsign"] = "must be a string";
       ok = false;
     }
   }
 
-  if (!in["baudRate"].isNull()) {
+  JsonVariantConst baudRate = in["baudRate"];
+  if (!baudRate.isNull()) {
     float sanitized;
-    if (isValidBaudRate(in["baudRate"].as<float>(), sanitized)) {
+    if (!baudRate.is<float>()) {
+      errors["baudRate"] = "must be numeric";
+      ok = false;
+    } else if (isValidBaudRate(baudRate.as<float>(), sanitized)) {
       result.baudRate = sanitized;
     } else {
       errors["baudRate"] = "must be one of 45.45, 50, 75";
@@ -122,14 +142,20 @@ static bool configMerge(JsonVariantConst in, Config &out, JsonObject errors,
     }
   }
 
-  if (in["polarity"].is<const char *>()) {
-    const char *pol = in["polarity"].as<const char *>();
-    if (strcmp(pol, "markHigh") == 0) {
-      result.markHigh = true;
-    } else if (strcmp(pol, "markLow") == 0) {
-      result.markHigh = false;
+  JsonVariantConst polarity = in["polarity"];
+  if (!polarity.isNull()) {
+    if (polarity.is<const char *>()) {
+      const char *pol = polarity.as<const char *>();
+      if (strcmp(pol, "markHigh") == 0) {
+        result.markHigh = true;
+      } else if (strcmp(pol, "markLow") == 0) {
+        result.markHigh = false;
+      } else {
+        errors["polarity"] = "must be \"markHigh\" or \"markLow\"";
+        ok = false;
+      }
     } else {
-      errors["polarity"] = "must be \"markHigh\" or \"markLow\"";
+      errors["polarity"] = "must be a string";
       ok = false;
     }
   }
@@ -146,74 +172,122 @@ static bool configMerge(JsonVariantConst in, Config &out, JsonObject errors,
   };
   for (const auto &f : timingFields) {
     if (!in[f.jsonKey].isNull()) {
-      long v = in[f.jsonKey].as<long>();
-      if (isValidTimingMs(v)) {
-        result.*(f.member) = static_cast<uint16_t>(v);
-      } else {
-        errors[f.jsonKey] = "must be 0-9999";
+      JsonVariantConst timing = in[f.jsonKey];
+      if (!timing.is<long>()) {
+        errors[f.jsonKey] = "must be an integer from 0-9999";
         ok = false;
+      } else {
+        long v = timing.as<long>();
+        if (isValidTimingMs(v)) {
+          result.*(f.member) = static_cast<uint16_t>(v);
+        } else {
+          errors[f.jsonKey] = "must be 0-9999";
+          ok = false;
+        }
       }
     }
   }
 
-  if (!in["liveLcdText"].isNull()) {
-    result.liveLcdText = in["liveLcdText"].as<bool>();
-  }
-
-  if (in["uart2Mode"].is<const char *>()) {
-    const char *m = in["uart2Mode"].as<const char *>();
-    if (strcmp(m, "fsk2") == 0) {
-      result.uart2Mode = Uart2Mode::Fsk2;
-    } else if (strcmp(m, "cw") == 0) {
-      result.uart2Mode = Uart2Mode::Cw;
+  JsonVariantConst liveLcdText = in["liveLcdText"];
+  if (!liveLcdText.isNull()) {
+    if (liveLcdText.is<bool>()) {
+      result.liveLcdText = liveLcdText.as<bool>();
     } else {
-      errors["uart2Mode"] = "must be \"fsk2\" or \"cw\"";
+      errors["liveLcdText"] = "must be a boolean";
       ok = false;
     }
   }
 
-  if (!in["cwSpeedWpm"].isNull()) {
-    long v = in["cwSpeedWpm"].as<long>();
-    if (isValidCwSpeedWpm(v)) {
-      result.cwSpeedWpm = static_cast<uint8_t>(v);
+  JsonVariantConst uart2Mode = in["uart2Mode"];
+  if (!uart2Mode.isNull()) {
+    if (uart2Mode.is<const char *>()) {
+      const char *m = uart2Mode.as<const char *>();
+      if (strcmp(m, "fsk2") == 0) {
+        result.uart2Mode = Uart2Mode::Fsk2;
+      } else if (strcmp(m, "cw") == 0) {
+        result.uart2Mode = Uart2Mode::Cw;
+      } else {
+        errors["uart2Mode"] = "must be \"fsk2\" or \"cw\"";
+        ok = false;
+      }
     } else {
-      errors["cwSpeedWpm"] = "must be 5-99";
+      errors["uart2Mode"] = "must be a string";
       ok = false;
+    }
+  }
+
+  JsonVariantConst cwSpeedWpm = in["cwSpeedWpm"];
+  if (!cwSpeedWpm.isNull()) {
+    if (!cwSpeedWpm.is<long>()) {
+      errors["cwSpeedWpm"] = "must be an integer from 5-99";
+      ok = false;
+    } else {
+      long v = cwSpeedWpm.as<long>();
+      if (isValidCwSpeedWpm(v)) {
+        result.cwSpeedWpm = static_cast<uint8_t>(v);
+      } else {
+        errors["cwSpeedWpm"] = "must be 5-99";
+        ok = false;
+      }
     }
   }
 
   JsonVariantConst net = in["network"];
   if (!net.isNull()) {
-    if (net["hostname"].is<const char *>()) {
-      const char *h = net["hostname"].as<const char *>();
-      size_t len = strlen(h);
-      if (isValidHostname(h, len)) {
-        strncpy(result.network.hostname, h, sizeof(result.network.hostname) - 1);
-        result.network.hostname[sizeof(result.network.hostname) - 1] = '\0';
-      } else {
-        errors["network.hostname"] = "1-31 chars, letters/digits/hyphen only";
-        ok = false;
+    if (!net.is<JsonObjectConst>()) {
+      errors["network"] = "must be an object";
+      ok = false;
+    } else {
+      JsonVariantConst hostname = net["hostname"];
+      if (!hostname.isNull()) {
+        if (hostname.is<const char *>()) {
+          const char *h = hostname.as<const char *>();
+          size_t len = strlen(h);
+          if (isValidHostname(h, len)) {
+            strncpy(result.network.hostname, h, sizeof(result.network.hostname) - 1);
+            result.network.hostname[sizeof(result.network.hostname) - 1] = '\0';
+          } else {
+            errors["network.hostname"] = "1-31 chars, alphanumeric ends, letters/digits/hyphen only";
+            ok = false;
+          }
+        } else {
+          errors["network.hostname"] = "must be a string";
+          ok = false;
+        }
       }
-    }
-    if (!net["dhcp"].isNull()) {
-      result.network.dhcp = net["dhcp"].as<bool>();
-    }
-    // Static-IP fields are only *required* to be valid when dhcp is false;
-    // when dhcp is true they're still validated if present (so garbage
-    // never gets persisted), just not required.
-    const struct {
-      const char *jsonKey;
-      char *field;
-      size_t fieldSize;
-    } ipFields[] = {
-        {"staticIp", result.network.staticIp, sizeof(result.network.staticIp)},
-        {"gateway", result.network.gateway, sizeof(result.network.gateway)},
-        {"subnet", result.network.subnet, sizeof(result.network.subnet)},
-        {"dns", result.network.dns, sizeof(result.network.dns)},
-    };
-    for (const auto &f : ipFields) {
-      if (net[f.jsonKey].is<const char *>()) {
-        const char *v = net[f.jsonKey].as<const char *>();
+      JsonVariantConst dhcp = net["dhcp"];
+      if (!dhcp.isNull()) {
+        if (dhcp.is<bool>()) {
+          result.network.dhcp = dhcp.as<bool>();
+        } else {
+          errors["network.dhcp"] = "must be a boolean";
+          ok = false;
+        }
+      }
+      // Static-IP fields are only *required* to be valid when dhcp is false;
+      // when dhcp is true they're still validated if present (so garbage
+      // never gets persisted), just not required.
+      const struct {
+        const char *jsonKey;
+        char *field;
+        size_t fieldSize;
+      } ipFields[] = {
+          {"staticIp", result.network.staticIp, sizeof(result.network.staticIp)},
+          {"gateway", result.network.gateway, sizeof(result.network.gateway)},
+          {"subnet", result.network.subnet, sizeof(result.network.subnet)},
+          {"dns", result.network.dns, sizeof(result.network.dns)},
+      };
+      for (const auto &f : ipFields) {
+        JsonVariantConst address = net[f.jsonKey];
+        if (address.isNull()) continue;
+        if (!address.is<const char *>()) {
+          char key[32];
+          snprintf(key, sizeof(key), "network.%s", f.jsonKey);
+          errors[key] = "must be a string containing a valid IPv4 address";
+          ok = false;
+          continue;
+        }
+        const char *v = address.as<const char *>();
         if (isValidIPv4(v)) {
           strncpy(f.field, v, f.fieldSize - 1);
           f.field[f.fieldSize - 1] = '\0';
@@ -278,11 +352,23 @@ bool configSave(const Config &cfg) {
   JsonObject root = doc.to<JsonObject>();
   configToJson(cfg, root);
 
-  File f = LittleFS.open(CONFIG_PATH, "w");
+  // Write a complete temporary file first, then atomically replace the live
+  // path. Arduino-ESP32's FS::rename() maps to POSIX rename(), so the old
+  // config survives write/close/rename failures instead of being truncated.
+  File f = LittleFS.open(CONFIG_TEMP_PATH, "w");
   if (!f) {
     return false;
   }
-  bool ok = serializeJson(doc, f) > 0;
+  size_t expected = measureJson(doc);
+  size_t written = serializeJson(doc, f);
   f.close();
-  return ok;
+  if (written != expected) {
+    LittleFS.remove(CONFIG_TEMP_PATH);
+    return false;
+  }
+  if (!LittleFS.rename(CONFIG_TEMP_PATH, CONFIG_PATH)) {
+    LittleFS.remove(CONFIG_TEMP_PATH);
+    return false;
+  }
+  return true;
 }

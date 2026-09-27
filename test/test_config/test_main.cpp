@@ -130,6 +130,54 @@ void test_validation_reports_each_invalid_network_field() {
   TEST_ASSERT_TRUE(errors["network.dns"].is<const char *>());
 }
 
+void test_validation_rejects_present_fields_with_wrong_types() {
+  Config cfg;
+  JsonDocument input;
+  input["callsign"] = 123;
+  input["baudRate"] = "50";
+  input["polarity"] = false;
+  input["pttLeadMs"] = 1.5;
+  input["liveLcdText"] = "true";
+  input["uart2Mode"] = 1;
+  input["cwSpeedWpm"] = 20.5;
+  input["network"] = "not-an-object";
+  JsonDocument errorDoc;
+  JsonObject errors = errorDoc.to<JsonObject>();
+
+  TEST_ASSERT_FALSE(
+      configValidate(input.as<JsonVariantConst>(), cfg, errors));
+  TEST_ASSERT_TRUE(errors["callsign"].is<const char *>());
+  TEST_ASSERT_TRUE(errors["baudRate"].is<const char *>());
+  TEST_ASSERT_TRUE(errors["polarity"].is<const char *>());
+  TEST_ASSERT_TRUE(errors["pttLeadMs"].is<const char *>());
+  TEST_ASSERT_TRUE(errors["liveLcdText"].is<const char *>());
+  TEST_ASSERT_TRUE(errors["uart2Mode"].is<const char *>());
+  TEST_ASSERT_TRUE(errors["cwSpeedWpm"].is<const char *>());
+  TEST_ASSERT_TRUE(errors["network"].is<const char *>());
+}
+
+void test_hostname_must_start_and_end_alphanumeric() {
+  const char *invalidHostnames[] = {"-radio", "radio-", "-"};
+  for (const char *hostname : invalidHostnames) {
+    Config cfg;
+    JsonDocument input;
+    input["network"]["hostname"] = hostname;
+    JsonDocument errorDoc;
+    JsonObject errors = errorDoc.to<JsonObject>();
+    TEST_ASSERT_FALSE(
+        configValidate(input.as<JsonVariantConst>(), cfg, errors));
+    TEST_ASSERT_TRUE(errors["network.hostname"].is<const char *>());
+  }
+
+  Config cfg;
+  JsonDocument input;
+  input["network"]["hostname"] = "r";
+  JsonDocument errorDoc;
+  TEST_ASSERT_TRUE(configValidate(input.as<JsonVariantConst>(), cfg,
+                                  errorDoc.to<JsonObject>()));
+  TEST_ASSERT_EQUAL_STRING("r", cfg.network.hostname);
+}
+
 void test_save_writes_complete_round_trippable_json() {
   Config original;
   strcpy(original.callsign, "OK2ZAW");
@@ -158,6 +206,36 @@ void test_save_failure_is_reported() {
   TEST_ASSERT_FALSE(configSave(cfg));
 }
 
+void test_partial_write_failure_preserves_previous_config() {
+  LittleFS.fileExists = true;
+  LittleFS.contents = R"({"callsign":"OLD","cwSpeedWpm":20})";
+  LittleFS.writeLimit = 5;
+  Config replacement;
+  strcpy(replacement.callsign, "NEW");
+
+  TEST_ASSERT_FALSE(configSave(replacement));
+  TEST_ASSERT_FALSE(LittleFS.tempExists);
+
+  Config loaded;
+  TEST_ASSERT_TRUE(configLoad(loaded));
+  TEST_ASSERT_EQUAL_STRING("OLD", loaded.callsign);
+}
+
+void test_rename_failure_preserves_previous_config() {
+  LittleFS.fileExists = true;
+  LittleFS.contents = R"({"callsign":"OLD","cwSpeedWpm":20})";
+  LittleFS.allowRename = false;
+  Config replacement;
+  strcpy(replacement.callsign, "NEW");
+
+  TEST_ASSERT_FALSE(configSave(replacement));
+  TEST_ASSERT_FALSE(LittleFS.tempExists);
+
+  Config loaded;
+  TEST_ASSERT_TRUE(configLoad(loaded));
+  TEST_ASSERT_EQUAL_STRING("OLD", loaded.callsign);
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_missing_file_returns_defaults);
@@ -167,7 +245,11 @@ int main(int, char **) {
   RUN_TEST(test_api_validation_is_transactional_on_error);
   RUN_TEST(test_validation_accepts_all_documented_boundaries);
   RUN_TEST(test_validation_reports_each_invalid_network_field);
+  RUN_TEST(test_validation_rejects_present_fields_with_wrong_types);
+  RUN_TEST(test_hostname_must_start_and_end_alphanumeric);
   RUN_TEST(test_save_writes_complete_round_trippable_json);
   RUN_TEST(test_save_failure_is_reported);
+  RUN_TEST(test_partial_write_failure_preserves_previous_config);
+  RUN_TEST(test_rename_failure_preserves_previous_config);
   return UNITY_END();
 }
