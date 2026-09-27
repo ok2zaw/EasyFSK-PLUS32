@@ -3,10 +3,11 @@
 // ---------------------------------------------------------------------------
 // GPIO mapping for EasyFSK-PLUS32 on the Impero32 board (ESP32-WROOM-32U).
 //
-// This is the "near-final" mapping agreed in the design-decisions doc
-// (claude/esp32-port-design-decisions.md in the EasyFSK_LCD_ESP project),
-// carried over here verbatim. Rationale is repeated in comments below so
-// this header is self-explanatory without the design doc in hand.
+// This is the mapping implemented by the current firmware. The design log
+// also contains future MCP23017/encoder assignments that have deliberately
+// not been applied yet; README.md and this header are authoritative for a
+// board running this revision. Rationale is repeated below so the header is
+// self-explanatory without the design document in hand.
 //
 // Do NOT reassign these without re-checking the design doc's strapping-pin
 // discussion -- several of these were chosen specifically to avoid ESP32

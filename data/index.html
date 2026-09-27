@@ -315,10 +315,10 @@
       <h2>Manual transmit</h2>
       <div class="field">
         <label for="sendText">Text to send</label>
-        <input type="text" id="sendText" placeholder="CQ CQ DE ...">
+        <input type="text" id="sendText" maxlength="120" placeholder="CQ CQ DE ...">
         <div class="hint">
           If idle, Send keys up, sends this text, then automatically unkeys.
-          If already transmitting, this text is appended to the buffer.
+          If already transmitting, this text is appended to the buffer. Maximum 120 characters per request.
         </div>
       </div>
       <div class="actions">

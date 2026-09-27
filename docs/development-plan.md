@@ -24,17 +24,28 @@ future work can continue without reconstructing the plan from conversation.
 - [x] Obtain a clean firmware build and record the resulting resource usage.
 - [x] Keep the toolchain versions documented.
 
-Completed 2026-09-27: `pio run` succeeds. The release build uses 45,856 bytes
-of RAM (14.0%) and 967,337 bytes of the 1,966,080-byte application slot
+Completed 2026-09-27: `pio run` succeeds. The current release build uses 45,864
+bytes of RAM (14.0%) and 968,201 bytes of the 1,966,080-byte application slot
 (49.2%).
 
 ### 2. Minimum RTTY firmware
 
-- Verify safe boot levels for PTT and PA.
+- [x] Drive PTT and PA LOW as the first operation in `setup()` and document
+  the mandatory hardware pulls.
+- [x] Cancel active and queued TX work immediately on hardware inhibit.
+- [x] Make web Send/End/Abort report queue failures and prevent a missing End
+  command from leaving the transmitter keyed.
+- [x] Add host-side Baudot unit tests. They are ready for CI/a host with GCC;
+  this Windows workstation currently has no `gcc`/`g++` in `PATH`.
+- [x] Add a repeatable no-radio bench-test checklist.
 - Verify UART1 to Baudot to FSK output.
 - Verify hardware inhibit, key-up, buffered end, and immediate abort.
-- Verify non-blocking PTT/PA lead and tail sequencing.
+- Verify non-blocking PTT/PA lead and tail sequencing on hardware.
 - Keep LCD work outside the timing-critical path.
+
+Tail order resolved 2026-09-27: after the final bit, wait `pttTailMs`, drop
+main `PTT_PIN`, wait `paTailMs`, then drop `PTT_PA_PIN`. PA therefore remains
+engaged for the entire period in which main PTT is active.
 
 Completion criterion: all paths work on the bench without a connected radio.
 

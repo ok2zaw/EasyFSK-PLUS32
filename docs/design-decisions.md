@@ -73,8 +73,8 @@ FSK/PTT bit-timing discipline, and add wired LAN.
   an OTA-capable partition scheme (two ~1.9MB app slots + a small
   LittleFS partition for `/config.json`) from the start as cheap
   insurance — even before OTA itself is implemented, since the flash is
-  there either way. The first verified release build uses 967,337 bytes of
-  its 1,966,080-byte application slot (49.2%) and 45,856 bytes of RAM
+  there either way. The current verified release build uses 968,201 bytes of
+  its 1,966,080-byte application slot (49.2%) and 45,864 bytes of RAM
   (14.0%). 16MB-revision boards stay fully compatible (just unused
   headroom), so one firmware build target covers both revisions.
 
@@ -96,6 +96,11 @@ FSK/PTT bit-timing discipline, and add wired LAN.
   `PTT_USB_RTS_PIN`, and now the web Send button all go through the same
   inhibit check, exactly like today's firmware already does for the first
   two ("no matter what asks it to").
+- **PTT/PA tail order confirmed 2026-09-27:** after the final transmitted bit,
+  wait `pttTailMs`, release the main `PTT_PIN` first, wait `paTailMs`, then
+  release `PTT_PA_PIN`. The PA output therefore encloses the complete main-PTT
+  interval and always releases last. Hardware inhibit remains the exception:
+  as a safety cutoff it releases both outputs immediately without tail delays.
 - **Bit-timing architecture for ESP32**: replace TimerOne with the native
   hw_timer API. The reproducible build is pinned to Arduino-ESP32 2.0.17 and
   therefore uses `timerBegin(timer, divider, countUp)`,
@@ -181,7 +186,17 @@ FSK/PTT bit-timing discipline, and add wired LAN.
   section's "encoder mode-select LEDs" and "Architectural implication"
   notes, and the updated MCP23017 pin budget (14 of 16 committed).
 
-## GPIO mapping for the remaining EasyFSK signals (near-final)
+## GPIO mapping for the remaining EasyFSK signals
+
+**Implementation update, 2026-09-27:** the original near-final table below was
+superseded in part when the independent UART2/Winkey input was implemented.
+The current firmware moves `CPU_INH_PIN` from GPIO15 to input-only GPIO35
+(therefore requiring an external pull-up), assigns UART2 TX/RX to GPIO15/36,
+and still drives `LED_RX_PIN` on GPIO2 plus the reserved `ON_PIN` on GPIO14.
+The later MCP23017/encoder plan remains future work: once implemented it will
+move the RX LED to the expander, remove `ON_PIN`, and reuse GPIO2/GPIO14 for
+the encoder. `include/Pins.h` and the README's GPIO table are authoritative
+for the firmware that exists today.
 
 | Signal | J1 pin / GPIO | Rationale |
 |---|---|---|
@@ -189,7 +204,9 @@ FSK/PTT bit-timing discipline, and add wired LAN.
 | `PTT_PIN` (safety-critical, must default LOW at boot) | OUT3 / GPIO16 | No strapping role at all — cleanest choice for the most safety-critical output |
 | `PTT_PA_PIN` (safety-critical, must default LOW at boot) | MOSI / GPIO13 | No strapping role — the only clean pin among the SPI-labeled four |
 | `FSK_PIN` | OUT2 / GPIO5 | Technically a strapping pin (SDIO slave timing) but that role is irrelevant to boot-mode selection and its required state is satisfied by the internal pull-up by default — much lower risk category than GPIO0/2/12/15 |
-| `CPU_INH_PIN` (needs internal pull-up, so not GPIO34-39) | CS / GPIO15 | Idle/not-inhibited state (HIGH) matches what GPIO15 (MTDO) wants at boot anyway |
+| `CPU_INH_PIN` (current implementation; external pull-up mandatory) | ADC2 / GPIO35 | Moved from GPIO15 to free UART2 TX; input-only and has no internal pull resistor |
+| `UART2_TX_PIN` | CS / GPIO15 | Second hardware UART, mode-switched between FSK2 and Winkey |
+| `UART2_RX_PIN` | GPIO36 | Second hardware UART RX; input-only is suitable, no pull resistor available |
 | `ENC_A_PIN` (digipot-trim rotary encoder, quadrature A) | OUT1 / GPIO2 | **Decided 2026-09-02.** Freed by moving `LED_RX_PIN` to the MCP23017 (see below); decoded via the ESP32's hardware **PCNT** peripheral, not polled. Encoder contacts idle HIGH (pulled up) when not being turned, so the "avoid pulling low at reset" caution is satisfied in normal rest position at boot. |
 | `ENC_B_PIN` (digipot-trim rotary encoder, quadrature B) | CLK / GPIO14 | **Decided 2026-09-02.** Freed by removing `ON_PIN`; no boot-relevant strapping concern for a post-boot PCNT input. |
 | *(reserved, avoid using)* | MISO / GPIO12 | **Deliberately left unconnected.** This is MTDI, the flash-voltage-select strap — the one genuinely risky pin (wrong flash voltage detection at boot, not just a cosmetic/log-verbosity issue like the others). With outputs free to assign, there's no reason to touch it. |

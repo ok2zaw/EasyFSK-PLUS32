@@ -23,12 +23,11 @@ See [`docs/design-decisions.md`](docs/design-decisions.md) for the full,
 running design log — including several **planned features not yet
 implemented in this code** (RTTY tuning indicator + spectrum waterfall,
 signal-quality meter, RX/TX audio level digipot trim via the rotary
-encoder, a 9-LED tuning bargraph, an RTTY receive decoder, and CW keying
-via Winkey protocol emulation). Some of these imply GPIO reassignments
-(e.g. `ON_PIN` removed, `LED_RX_PIN` moving to an MCP23017 I2C expander,
-GPIO2/GPIO14 repurposed for the encoder) that are **decided in the doc
-but not yet applied to `Pins.h`/this codebase** — the GPIO table below
-reflects the code as it stands today, not the doc's latest plan.
+encoder, a 9-LED tuning bargraph, and an RTTY receive decoder). UART2 and
+the initial Winkey/CW engine are implemented, but the physical MCP23017
+`MODE_SEL_PIN` remains a stub. Future encoder/MCP23017 work still implies
+GPIO changes (`ON_PIN` removal and moving `LED_RX_PIN` off GPIO2); the table
+below deliberately describes the firmware as it is built today.
 
 ## Hardware
 
@@ -46,16 +45,30 @@ reflects the code as it stands today, not the doc's latest plan.
 | `FSK_PIN` | 5 | FSK keying output (mark/space) |
 | `PTT_PIN` | 16 | Main relay PTT, safety-critical, defaults LOW |
 | `PTT_PA_PIN` | 13 | PA/amp-stage PTT, safety-critical, defaults LOW |
-| `CPU_INH_PIN` | 15 | Hardware inhibit input (active LOW, internal pull-up) |
+| `CPU_INH_PIN` | 35 | Hardware inhibit input (active LOW, **mandatory external pull-up**) |
 | `LED_RX_PIN` | 2 | RX indicator LED |
 | `ON_PIN` | 14 | Reserved, unused |
-| `PTT_USB_RTS_PIN` | 39 | External hardware PTT-request input (active LOW) |
+| `PTT_USB_RTS_PIN` | 39 | External hardware PTT-request input (active LOW, **mandatory external pull-up**) |
+| UART2 TX / RX | 15 / 36 | FSK2 at 9600/8-N-1 or Winkey CW at 1200/8-N-2; RX is input-only |
 | I2C SDA / SCL (status LCD) | 32 / 33 | Moved off the ESP32 defaults — those pins are used by Ethernet |
 | Ethernet | 19/21/22/25/26/27 (RMII data), 23/18 (MDC/MDIO), 17 (oscillator enable), 0 (REFCLK in) | Fixed by the ESP32 EMAC; PHY address is **1**, not the arduino-esp32 default of 0 |
 
 See `include/Pins.h` for the full rationale (several of these were
 deliberately chosen to avoid ESP32 boot-strapping pins; GPIO12 is left
 completely unused on purpose).
+
+### Boot and input safety
+
+`PTT_PIN` and `PTT_PA_PIN` are driven LOW as the first operation in
+`setup()`, before Serial, LittleFS, LCD, Ethernet, or timers are initialized.
+Firmware cannot control the earlier ESP32 ROM bootloader window, so the relay
+driver hardware should also provide external pull-downs on both outputs.
+
+GPIO35 (`CPU_INH_PIN`) and GPIO39 (`PTT_USB_RTS_PIN`) have no internal pull
+resistors. Both active-LOW inputs therefore require external pull-ups; do not
+operate the board with either input floating. Asserting inhibit cancels the
+active transmission and all queued TX commands before forcing both PTT outputs
+LOW.
 
 ## Building
 
@@ -71,6 +84,7 @@ From the PlatformIO sidebar (or the CLI, from the project root):
 pio run                       # build firmware
 pio run --target upload       # flash firmware
 pio run --target uploadfs     # build + flash the web UI (data/) to LittleFS
+pio test -e native            # host-side Baudot tests (requires GCC/G++ in PATH)
 ```
 
 Flash both the firmware and the filesystem image — the web UI lives in
@@ -78,8 +92,8 @@ Flash both the firmware and the filesystem image — the web UI lives in
 firmware image.
 
 The build environment is pinned in `platformio.ini`: PlatformIO Espressif32
-7.1.3 with Arduino-ESP32 2.0.17 and exact library versions. The first verified
-release build uses 45,856 bytes of RAM (14.0%) and 967,337 bytes of its
+7.1.3 with Arduino-ESP32 2.0.17 and exact library versions. The current verified
+release build uses 45,864 bytes of RAM (14.0%) and 968,201 bytes of its
 1,966,080-byte application slot (49.2%). Hardware testing is still required.
 
 ## Configuration

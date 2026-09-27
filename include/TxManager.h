@@ -36,6 +36,13 @@
 
 namespace TxManager {
 
+// Drives every safety-relevant output to its inactive level and configures
+// the hardware interlock inputs. Call as the very first operation in setup(),
+// before Serial, LittleFS, LCD, Ethernet, timers, or any boot splash. begin()
+// calls it again defensively, so an omitted early call still fails safe once
+// TxManager itself is initialized.
+void prepareSafePins();
+
 // FSK1 = UART1 (always-on RTTY control), Uart2Fsk = UART2 in "fsk2" mode
 // (a second, independent RTTY control input, same framing as UART1),
 // Winkey = UART2 in "cw" mode (Winkey protocol emulation, CW keying).
@@ -57,6 +64,11 @@ bool enqueueKeyUp(Source src);      // mirrors TX_ON ('[')
 bool enqueueBufferedEnd();          // mirrors TX_END (']')
 bool enqueueAbort();                // mirrors TX_ABORT ('\')
 bool enqueueByte(uint8_t b, Source src); // mirrors addToSendBuffer()
+
+// Number of currently unused command-queue slots. Intended for producers
+// that enqueue a burst synchronously (the web Send endpoint) so they can
+// reject an oversized request before queuing a partial transmission.
+size_t commandQueueFreeSlots();
 
 // --- CW/Winkey producer-side API (Source::Winkey only; called by
 // WinkeyEmulator). Each Add-style call implicitly enqueues a KeyUp(Winkey)
@@ -87,6 +99,7 @@ void cwSetPttLeadTail(uint16_t leadMs, uint16_t tailMs); // Winkey 0x04, values 
 // comparing full structs.
 struct Status {
   bool txActive = false;
+  bool pttActive = false;
   bool paActive = false;
   bool inhibited = false;
   Source pttSource = Source::SerialLink;

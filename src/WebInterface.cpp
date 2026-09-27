@@ -12,6 +12,7 @@
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <cstring>
 
 namespace WebInterface {
 
@@ -35,7 +36,7 @@ void buildStatusJson(JsonObject obj) {
   Config cfg = ConfigStore::get();
   obj["type"] = "status";
   obj["state"] = st.txActive ? "tx" : "idle";
-  obj["pttActive"] = st.txActive;
+  obj["pttActive"] = st.pttActive;
   obj["paActive"] = st.paActive;
   obj["pttSource"] = sourceToString(st.pttSource);
   obj["inhibited"] = st.inhibited;
@@ -134,26 +135,42 @@ void handleTxSend(AsyncWebServerRequest *request, JsonVariant &json) {
   }
   const char *text = json["text"] | "";
   bool wasIdle = !st.txActive;
-  if (wasIdle) {
-    TxManager::enqueueKeyUp(TxManager::Source::Web);
+  size_t textLen = strlen(text);
+  size_t requiredSlots = textLen + (wasIdle ? 2u : 0u); // KeyUp + text + End
+  if (textLen > 120) {
+    request->send(400, "application/json", "{\"ok\":false,\"reason\":\"text_too_long\",\"maxLength\":120}");
+    return;
   }
+  if (requiredSlots > TxManager::commandQueueFreeSlots()) {
+    request->send(503, "application/json", "{\"ok\":false,\"reason\":\"tx_queue_full\"}");
+    return;
+  }
+
+  bool queued = !wasIdle || TxManager::enqueueKeyUp(TxManager::Source::Web);
   for (const char *p = text; *p != '\0'; p++) {
-    TxManager::enqueueByte(static_cast<uint8_t>(*p), TxManager::Source::Web);
+    queued = queued && TxManager::enqueueByte(static_cast<uint8_t>(*p), TxManager::Source::Web);
   }
   if (wasIdle) {
-    TxManager::enqueueBufferedEnd(); // idle Send behaves like a self-contained [text]
+    queued = queued && TxManager::enqueueBufferedEnd(); // idle Send behaves like a self-contained [text]
+  }
+  if (!queued) {
+    TxManager::enqueueAbort();
+    request->send(503, "application/json", "{\"ok\":false,\"reason\":\"tx_queue_full\"}");
+    return;
   }
   request->send(200, "application/json", "{\"ok\":true}");
 }
 
 void handleTxEnd(AsyncWebServerRequest *request) {
-  TxManager::enqueueBufferedEnd();
-  request->send(200, "application/json", "{\"ok\":true}");
+  bool queued = TxManager::enqueueBufferedEnd();
+  request->send(queued ? 200 : 503, "application/json",
+                queued ? "{\"ok\":true}" : "{\"ok\":false,\"reason\":\"tx_queue_full_aborted\"}");
 }
 
 void handleTxAbort(AsyncWebServerRequest *request) {
-  TxManager::enqueueAbort();
-  request->send(200, "application/json", "{\"ok\":true}");
+  bool queued = TxManager::enqueueAbort();
+  request->send(queued ? 200 : 503, "application/json",
+                queued ? "{\"ok\":true}" : "{\"ok\":false,\"reason\":\"tx_not_ready\"}");
 }
 
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type,
