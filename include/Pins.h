@@ -30,10 +30,13 @@
 // satisfied by the pin's own internal pull-up -- low risk.
 #define FSK_PIN 5
 
-// Hardware inhibit input. Needs an internal pull-up (idle/not-inhibited =
-// HIGH), so it can't live on GPIO34-39 (input-only, no internal pulls).
-// J1 pin: CS. Idle-HIGH also matches what GPIO15 (MTDO) wants at boot.
-#define CPU_INH_PIN 15
+// Hardware inhibit input, active LOW (idle/not-inhibited = HIGH).
+// Moved 2026-09-27 (see design doc's GPIO mapping section) from CS/GPIO15
+// onto ADC2/GPIO35 to free GPIO15 for UART2 (below). GPIO35 is input-only
+// with NO internal pull -- unlike the old GPIO15 home, this net now needs
+// a small EXTERNAL pull-up resistor on the board (hardware/BOM change).
+// Firmware must use plain INPUT here, not INPUT_PULLUP -- see TxManager.cpp.
+#define CPU_INH_PIN 35
 
 // RX indicator LED (cosmetic only -- opposite sense of PTT_PIN).
 // J1 pin: OUT1. Board's own "avoid pulling low at reset" caution is
@@ -52,6 +55,18 @@
 // Deliberately unused: J1 MISO / GPIO12 (MTDI, flash-voltage-select strap)
 // -- the one genuinely risky pin on this board. Do not assign it.
 // #define UNUSED_RESERVED_PIN 12
+
+// --- UART2 (added 2026-09-27, freed by the CPU_INH_PIN move above) --------
+//
+// A second hardware UART (ESP32 has 3 real ones -- routed via the GPIO
+// matrix, not a "virtual"/software UART). Mode-switched between a second,
+// independent FSK/RTTY control input ("FSK2", same 9600/8-N-1 framing as
+// UART1/Serial) and Winkey CW-keyer emulation (1200/8-N-2) -- see
+// WinkeyEmulator.h and the design doc's "UART1/UART2 split" section.
+// UART1 (the original UART0/J1 RXD-TXD link, GPIO1/GPIO3, plain `Serial`)
+// is UNCHANGED and always speaks FSK/RTTY control regardless of this mode.
+#define UART2_TX_PIN 15 // J1 CS -- freed by the CPU_INH_PIN move above
+#define UART2_RX_PIN 36 // ADC1(SVN) -- the other previously-spare input-only pin
 
 // --- Status LCD (I2C) -------------------------------------------------------
 

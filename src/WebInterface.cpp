@@ -24,7 +24,9 @@ const char *sourceToString(TxManager::Source src) {
   switch (src) {
     case TxManager::Source::Rts: return "rts";
     case TxManager::Source::Web: return "web";
-    default: return "serial";
+    case TxManager::Source::Uart2Fsk: return "uart2fsk"; // added 2026-09-27, UART1/UART2 split
+    case TxManager::Source::Winkey: return "winkey";     // added 2026-09-27, CW/Winkey keying
+    default: return "serial"; // Source::SerialLink (UART1)
   }
 }
 

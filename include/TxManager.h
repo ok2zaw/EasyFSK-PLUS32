@@ -2,19 +2,29 @@
 
 #include <Arduino.h>
 #include "Config.h"
+#include "Morse.h"
 
 // ---------------------------------------------------------------------------
 // TX Manager: the single owner of send-buffer state, PTT/PA sequencing, and
 // shift state, per the design doc's "Firmware task architecture" section.
 // Runs as its own FreeRTOS task (pinned to the same core as the timer ISR)
-// and is the only code that ever calls into Baudot::SendBuffer or FskTimer's
-// producer-side API.
+// and is the only code that ever calls into Baudot::SendBuffer/FskTimer's
+// or Morse::CwBuffer/CwTimer's producer-side APIs.
 //
-// Every other producer (serial-receive, RTS-pin poll [handled internally],
-// the web Send/End/Abort handlers) submits short messages through the
-// enqueueXxx() functions below instead of touching TX state directly --
-// this is what replaces the AVR original's implicit single-threadedness now
-// that there are three possible sources of TX commands.
+// Every other producer (UART1 serial-receive, UART2 in "fsk2" mode, the
+// RTS-style hardware input [handled internally], the web Send handler, and
+// now WinkeyEmulator) submits short messages through the enqueueXxx()/
+// cwXxx() functions below instead of touching TX state directly.
+//
+// 2026-09-27: extended for the "UART1/UART2 split" + Winkey/CW keying
+// architecture (see the design doc). Two independent playback engines now
+// share this one state machine and its PTT/PA lead-tail sequencer:
+//   - Baudot/FskTimer, for RTTY (Source::SerialLink and Source::Uart2Fsk).
+//   - Morse/CwTimer, for CW (Source::Winkey only).
+// Exactly one of the two is ever active at a time -- the state machine's
+// existing single-`s_state` design already enforces "only one TX session at
+// a time regardless of source", which is what keeps the two engines from
+// ever fighting over the shared FSK_PIN.
 //
 // PTT/PA lead-tail sequencing is a NON-BLOCKING state machine (checked once
 // per task iteration via millis()), not blocking delay()/waitDrainingSerial()
@@ -26,12 +36,15 @@
 
 namespace TxManager {
 
-enum class Source : uint8_t { SerialLink, Rts, Web };
+// FSK1 = UART1 (always-on RTTY control), Uart2Fsk = UART2 in "fsk2" mode
+// (a second, independent RTTY control input, same framing as UART1),
+// Winkey = UART2 in "cw" mode (Winkey protocol emulation, CW keying).
+enum class Source : uint8_t { SerialLink, Uart2Fsk, Rts, Web, Winkey };
 
 // Creates the command queue and the TX Manager FreeRTOS task. Call once
-// from setup(), after Config/FskTimer/Pins are initialized. `cfg` is
-// copied in; call applyConfig() again later if the user saves new PTT/PA
-// timing or polarity/baud values.
+// from setup(), after Config/FskTimer/CwTimer/Pins are initialized. `cfg`
+// is copied in; call applyConfig() again later if the user saves new
+// PTT/PA timing, polarity/baud, or CW timing values.
 void begin(const Config &cfg);
 
 // Re-reads timing/polarity/baud values from `cfg` for use on the *next*
@@ -39,15 +52,34 @@ void begin(const Config &cfg);
 // config change never affects a TX already in progress, only future ones.
 void applyConfig(const Config &cfg);
 
-// Producer-side API. All of these are safe to call from any task (serial
-// handling, the web server's task, etc.) -- they just post to an internal
-// FreeRTOS queue and return quickly. Returns false only if the queue is
-// momentarily full (shouldn't happen in practice at RTTY speeds/buffer
-// sizes; callers may treat it as backpressure).
+// --- RTTY/Baudot producer-side API (Source::SerialLink, Uart2Fsk, Rts, Web) ---
 bool enqueueKeyUp(Source src);      // mirrors TX_ON ('[')
 bool enqueueBufferedEnd();          // mirrors TX_END (']')
 bool enqueueAbort();                // mirrors TX_ABORT ('\')
 bool enqueueByte(uint8_t b, Source src); // mirrors addToSendBuffer()
+
+// --- CW/Winkey producer-side API (Source::Winkey only; called by
+// WinkeyEmulator). Each Add-style call implicitly enqueues a KeyUp(Winkey)
+// first when idle (harmless/ignored if a CW session is already active,
+// same "redundant TX_ON" guard as the RTTY path) -- callers don't need to
+// track session lifecycle themselves, just push content as it arrives from
+// the host. All timing setters take effect on characters generated AFTER
+// the call (an in-flight character finishes at its old timing). ---
+bool cwEnqueueChar(uint8_t asciiByte);
+bool cwEnqueueMergeMark();               // Winkey 0x1B: no gap before the NEXT char queued
+bool cwEnqueueSideEffect(Morse::SideEffect effect, uint8_t value = 0);
+bool cwEnqueueBufferedSpeed(uint8_t wpm); // Winkey 0x1C (buffered, takes its turn in order)
+void cwBackspace();                       // Winkey 0x08
+void cwClearPendingBuffer();              // Winkey 0x0A: drop everything not yet playing
+uint16_t cwBufferPending();                // for the Winkey status byte's XOFF bit
+
+void cwSetSpeedWpm(uint8_t wpm);          // Winkey 0x02 (immediate)
+void cwSetWeightingPct(uint8_t pct);      // Winkey 0x03
+void cwSetFarnsworthWpm(uint8_t wpm);     // Winkey 0x0D (0 = disabled)
+void cwSetKeyCompMs(uint8_t ms);          // Winkey 0x11
+void cwSetFirstExtensionMs(uint8_t ms);   // Winkey 0x10
+void cwSetTuneKeyDown(bool down);         // Winkey 0x0B "Key Immediate" (antenna-tune carrier)
+void cwSetPttLeadTail(uint16_t leadMs, uint16_t tailMs); // Winkey 0x04, values already ×10ms-decoded
 
 // Status snapshot for the web/LCD status feed. `revision` increments on
 // every state change -- callers (the web layer's status-push loop) can
@@ -69,5 +101,9 @@ struct Status {
 
 // Thread-safe-ish snapshot read (short critical section).
 Status getStatus();
+
+// LCD/status source label -- FSK1/FSK2/RTS/WEB/CWK, see the design doc's
+// "UART1/UART2 split" LCD-display decision (2026-09-27).
+const char *sourceLabel(Source src);
 
 } // namespace TxManager

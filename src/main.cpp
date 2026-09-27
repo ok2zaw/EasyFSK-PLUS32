@@ -18,8 +18,11 @@
 #include "Config.h"
 #include "ConfigStore.h"
 #include "FskTimer.h"
+#include "CwTimer.h"
 #include "TxManager.h"
 #include "SerialControl.h"
+#include "WinkeyEmulator.h"
+#include "ModeSelect.h"
 #include "StatusDisplay.h"
 #include "WebInterface.h"
 
@@ -71,8 +74,12 @@ void setup() {
   }
 
   FskTimer::begin(cfg.baudRate, cfg.markHigh);
+  CwTimer::begin();
+  ModeSelect::begin();
+  ModeSelect::setActive(cfg.uart2Mode == Uart2Mode::Cw);
   TxManager::begin(cfg);
   SerialControl::begin();
+  WinkeyEmulator::begin(cfg); // owns UART2 -- see the design doc's "UART1/UART2 split"
   WebInterface::begin();
 
   bool inhibited = (digitalRead(CPU_INH_PIN) == LOW);
@@ -81,9 +88,15 @@ void setup() {
 }
 
 void loop() {
-  // Bit-timing is entirely interrupt-driven (FskTimer) and PTT/PA/queue
-  // servicing runs in TxManager's own task -- loop() only has to pump the
-  // serial-control byte-at-a-time state machine, matching the AVR
-  // original's "don't bog down the processor" one-byte-per-pass approach.
+  // Bit-timing is entirely interrupt-driven (FskTimer/CwTimer) and PTT/PA/
+  // queue servicing runs in TxManager's own task -- loop() only has to
+  // pump the two serial-control byte-at-a-time state machines, matching
+  // the AVR original's "don't bog down the processor" one-byte-per-pass
+  // approach. SerialControl (UART1) is polled BEFORE WinkeyEmulator
+  // (UART2) every iteration -- this is what gives UART1 priority when both
+  // links present a command in the same instant (design doc, 2026-09-27:
+  // "UART1 has priority... the polling/dequeue order checks UART1's
+  // SerialControl instance before UART2's each cycle").
   SerialControl::poll();
+  WinkeyEmulator::poll();
 }

@@ -56,6 +56,10 @@ static bool isValidIPv4(const char *s) {
   return octets == 4;
 }
 
+static bool isValidCwSpeedWpm(long v) {
+  return v >= CfgLimits::CW_SPEED_MIN_WPM && v <= CfgLimits::CW_SPEED_MAX_WPM;
+}
+
 static bool isValidHostname(const char *s, size_t len) {
   if (len == 0 || len > CfgLimits::HOSTNAME_MAX_LEN) return false;
   for (size_t i = 0; i < len; i++) {
@@ -78,6 +82,8 @@ void configToJson(const Config &cfg, JsonObject out) {
   out["paLeadMs"] = cfg.paLeadMs;
   out["paTailMs"] = cfg.paTailMs;
   out["liveLcdText"] = cfg.liveLcdText;
+  out["uart2Mode"] = (cfg.uart2Mode == Uart2Mode::Cw) ? "cw" : "fsk2";
+  out["cwSpeedWpm"] = cfg.cwSpeedWpm;
 
   JsonObject net = out["network"].to<JsonObject>();
   net["hostname"] = cfg.network.hostname;
@@ -150,6 +156,28 @@ bool configValidate(JsonVariantConst in, Config &out, JsonObject errors) {
 
   if (!in["liveLcdText"].isNull()) {
     result.liveLcdText = in["liveLcdText"].as<bool>();
+  }
+
+  if (in["uart2Mode"].is<const char *>()) {
+    const char *m = in["uart2Mode"].as<const char *>();
+    if (strcmp(m, "fsk2") == 0) {
+      result.uart2Mode = Uart2Mode::Fsk2;
+    } else if (strcmp(m, "cw") == 0) {
+      result.uart2Mode = Uart2Mode::Cw;
+    } else {
+      errors["uart2Mode"] = "must be \"fsk2\" or \"cw\"";
+      ok = false;
+    }
+  }
+
+  if (!in["cwSpeedWpm"].isNull()) {
+    long v = in["cwSpeedWpm"].as<long>();
+    if (isValidCwSpeedWpm(v)) {
+      result.cwSpeedWpm = static_cast<uint8_t>(v);
+    } else {
+      errors["cwSpeedWpm"] = "must be 5-99";
+      ok = false;
+    }
   }
 
   JsonVariantConst net = in["network"];
