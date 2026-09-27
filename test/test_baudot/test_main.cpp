@@ -42,8 +42,8 @@ void test_letter_injects_ltrs_shift_then_payload() {
   TEST_ASSERT_EQUAL_UINT8(0, shift.asciiByte);
   TEST_ASSERT_EQUAL_UINT8(3, payload.baudotCode);
   TEST_ASSERT_EQUAL_UINT8('A', payload.asciiByte);
-  TEST_ASSERT_EQUAL_SIZE_T(0, buffer.pending());
-  TEST_ASSERT_EQUAL_SIZE_T(1, Serial.writeCount);
+  TEST_ASSERT_EQUAL_size_t(0, buffer.pending());
+  TEST_ASSERT_EQUAL_size_t(1, Serial.writeCount);
   TEST_ASSERT_EQUAL_UINT8('A', Serial.lastByte);
 }
 
@@ -94,9 +94,9 @@ void test_send_buffer_rejects_byte_501() {
     TEST_ASSERT_TRUE(buffer.addByte('A'));
   }
 
-  TEST_ASSERT_EQUAL_SIZE_T(Baudot::SEND_BUFFER_SIZE, buffer.pending());
+  TEST_ASSERT_EQUAL_size_t(Baudot::SEND_BUFFER_SIZE, buffer.pending());
   TEST_ASSERT_FALSE(buffer.addByte('B'));
-  TEST_ASSERT_EQUAL_SIZE_T(Baudot::SEND_BUFFER_SIZE, buffer.pending());
+  TEST_ASSERT_EQUAL_size_t(Baudot::SEND_BUFFER_SIZE, buffer.pending());
 }
 
 void test_tx_lead_sequence_honors_both_delays() {
