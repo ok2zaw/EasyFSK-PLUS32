@@ -18,7 +18,8 @@ future work can continue without reconstructing the plan from conversation.
   the current suite covers Baudot, TX sequencing, Morse generation, the
   UART2/Winkey parser, configuration validation/load/save behavior, guarded
   live configuration updates, web TX queue admission, and critical web-form
-  bindings.
+  bindings. The UART1 `SerialControl` parser and its serial configuration
+  menu are covered as well; 113 host tests currently pass.
 
 ## Implementation order
 
@@ -30,7 +31,7 @@ future work can continue without reconstructing the plan from conversation.
 - [x] Keep the toolchain versions documented.
 
 Verified 2026-09-28: `pio run` succeeds. The current release build uses 45,904
-bytes of RAM (14.0%) and 971,297 bytes of the 1,966,080-byte application slot
+bytes of RAM (14.0%) and 971,821 bytes of the 1,966,080-byte application slot
 (49.4%).
 
 ### 2. Minimum RTTY firmware
@@ -42,6 +43,8 @@ bytes of RAM (14.0%) and 971,297 bytes of the 1,966,080-byte application slot
   command from leaving the transmitter keyed.
 - [x] Add host-side Baudot and PTT/PA sequencing unit tests, including zero
   delays and `millis()` wraparound.
+- [x] Test UART1 byte routing and every serial `~` configuration-menu path,
+  including input limits, cancellation, persistence errors, and queue refusal.
 - [x] Run host tests and the ESP32 firmware build in GitHub Actions CI; the
   Windows workstation also has WinLibs `gcc`/`g++` 16.1.0 in `PATH`.
 - [x] Add a repeatable no-radio bench-test checklist.
@@ -114,8 +117,11 @@ Defaults, unsolicited status changes, WK3-command parser synchronization,
 buffer-pointer operands, Clear Buffer semantics, and temporary buffered-speed
 restoration/cancellation.
 
-Review fixes 2026-09-28: 100 host tests pass. Overlapping TX requests are now
-sequenced instead of lost: an RTTY `[text]` that arrives during the PTT/PA
+Review and SerialControl update 2026-09-30: 113 host tests pass. The 13 new
+UART1 parser tests cover one-byte polling, TX control routing, rejected queue
+operations, every single-key and numeric config field, callsign limits,
+cancellation, persistence errors, and state reset. Overlapping TX requests are
+now sequenced instead of lost: an RTTY `[text]` that arrives during the PTT/PA
 tail or during a CW session starts as the next session, CW waits behind
 RTTY, and CW resumes from its own PTT tail without dropping PTT (rules in
 `include/TxHandoff.h`, host-tested; the TxManager wiring still needs bench
