@@ -27,7 +27,7 @@ jobs:
         id: native_tests
         run: |
           set -o pipefail
-          pio test -e native -e native_winkey -e native_config -e native_config_store -e native_serial_control 2>&1 | tee native-test.log
+          pio test -e native -e native_winkey -e native_config -e native_config_store -e native_serial_control -e native_web_interface 2>&1 | tee native-test.log
 
       - name: Publish unit-test diagnostics
         if: always()

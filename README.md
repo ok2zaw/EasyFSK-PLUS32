@@ -14,7 +14,7 @@ manual transmit.
 ## Status
 
 Early first pass at the full architecture — build-verified and covered by
-113 host-side tests for Baudot, Morse, TX sequencing, serial control,
+127 host-side tests for Baudot, Morse, TX sequencing, serial control,
 configuration, the web UI, and the Winkey parser, but not yet tested on real
 hardware. Every module is a direct, deliberate port of the
 corresponding AVR logic (see comments throughout the source referencing
@@ -86,7 +86,7 @@ From the PlatformIO sidebar (or the CLI, from the project root):
 pio run                       # build firmware
 pio run --target upload       # flash firmware
 pio run --target uploadfs     # build + flash the web UI (data/) to LittleFS
-pio test -e native -e native_winkey -e native_config -e native_config_store -e native_serial_control
+pio test -e native -e native_winkey -e native_config -e native_config_store -e native_serial_control -e native_web_interface
 ```
 
 Flash both the firmware and the filesystem image — the web UI lives in

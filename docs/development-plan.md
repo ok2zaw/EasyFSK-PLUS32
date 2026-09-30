@@ -18,8 +18,9 @@ future work can continue without reconstructing the plan from conversation.
   the current suite covers Baudot, TX sequencing, Morse generation, the
   UART2/Winkey parser, configuration validation/load/save behavior, guarded
   live configuration updates, web TX queue admission, and critical web-form
-  bindings. The UART1 `SerialControl` parser and its serial configuration
-  menu are covered as well; 113 host tests currently pass.
+  bindings. The UART1 `SerialControl` parser, its serial configuration menu,
+  and the actual HTTP route handlers are covered as well; 127 host tests
+  currently pass.
 
 ## Implementation order
 
@@ -76,9 +77,11 @@ failure mode leaves PTT/PA in the safe state.
   files with a host-side filesystem double.
 - [x] Test configuration apply/save while idle and rejection during active TX
   through `ConfigStore`; test storage failures without changing live state.
-- Test the actual HTTP config handlers and responses with a web-server test
-  harness.
-- Test Ethernet loss and reconnect.
+- [x] Test the actual HTTP config/status/system/TX handlers and responses with
+  a host-side ESPAsyncWebServer harness.
+- [x] Simulate Ethernet link loss and recovery in `/api/system` and the
+  WebSocket heartbeat.
+- Verify physical PHY link loss and automatic reconnect on the bench.
 - [x] Add explicit handling/reporting for full TX queues and oversized
   requests.
 
@@ -117,18 +120,22 @@ Defaults, unsolicited status changes, WK3-command parser synchronization,
 buffer-pointer operands, Clear Buffer semantics, and temporary buffered-speed
 restoration/cancellation.
 
-Review and SerialControl update 2026-09-30: 113 host tests pass. The 13 new
-UART1 parser tests cover one-byte polling, TX control routing, rejected queue
-operations, every single-key and numeric config field, callsign limits,
-cancellation, persistence errors, and state reset. Overlapping TX requests are
-now sequenced instead of lost: an RTTY `[text]` that arrives during the PTT/PA
-tail or during a CW session starts as the next session, CW waits behind
-RTTY, and CW resumes from its own PTT tail without dropping PTT (rules in
-`include/TxHandoff.h`, host-tested; the TxManager wiring still needs bench
-verification). Also fixed: web Send during a tail or CW session, a UART2
-mode switch from the web task racing `loop()`, config saves resetting the
-logger's CW speed, the Winkey XOFF/BUSY bits during lead-in and while CW
-waits, and the `liveLcdText` setting being ignored.
+Review, SerialControl, and web-transport update 2026-09-30: 127 host tests
+pass. The 13 UART1 parser tests cover one-byte polling, TX control routing,
+rejected queue operations, every single-key and numeric config field, callsign
+limits, cancellation, persistence errors, and state reset. Fourteen HTTP
+transport tests exercise the production route handlers: registration,
+configuration and backup, status/source mapping, system diagnostics, Send
+admission and partial-queue failure, End, Abort, and simulated Ethernet link
+loss/recovery in both HTTP status and WebSocket heartbeat. Overlapping TX
+requests are now sequenced instead of lost: an RTTY `[text]` that arrives
+during the PTT/PA tail or during a CW session starts as the next session, CW
+waits behind RTTY, and CW resumes from its own PTT tail without dropping PTT
+(rules in `include/TxHandoff.h`, host-tested; the TxManager wiring still needs bench
+verification). Also fixed: web Send during a tail or CW session, a UART2 mode
+switch from the web task racing `loop()`, config saves resetting the logger's
+CW speed, the Winkey XOFF/BUSY bits during lead-in and while CW waits, and the
+`liveLcdText` setting being ignored.
 
 Completion criterion: both UART2 modes pass host and timing tests, and the
 physical routing output always agrees with the selected mode.
