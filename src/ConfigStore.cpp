@@ -1,6 +1,7 @@
 #include "ConfigStore.h"
 #include "TxManager.h"
 #include "FskTimer.h"
+#include "TciAfsk.h"
 #include "WinkeyEmulator.h"
 #include "ModeSelect.h"
 
@@ -59,6 +60,7 @@ bool applyAndSave(JsonVariantConst in, JsonObject errors) {
   s_cfg = candidate;
   TxManager::applyConfig(s_cfg);
   FskTimer::reconfigure(s_cfg.baudRate, s_cfg.markHigh);
+  TciAfsk::applyConfig(s_cfg);
   // uart2Mode/cwSpeedWpm (2026-09-27, UART1/UART2 split): reconfiguring
   // UART2's baud/framing and the MODE_SEL_PIN routing level are both
   // apply-time actions gated by the same "not during an active TX" rule

@@ -145,6 +145,37 @@
   }
   .signal-metric span { display: block; color: var(--muted); font-size: .68rem; text-transform: uppercase; letter-spacing: .05em; }
   .signal-metric strong { display: block; margin-top: .2rem; font-size: .95rem; }
+  .adc-meter { padding: .85rem 1rem; }
+  .adc-meter-head { display: flex; align-items: baseline; justify-content: space-between; gap: .8rem; }
+  .adc-meter-head h3 { margin: 0; font-family: 'Montserrat', sans-serif; font-size: .85rem; }
+  .adc-meter-readout { display: flex; align-items: baseline; gap: .65rem; }
+  .adc-meter-readout strong { font-size: 1.05rem; font-variant-numeric: tabular-nums; }
+  .adc-meter-readout span { color: var(--muted); font-size: .76rem; }
+  .adc-track {
+    position: relative; height: 1.05rem; margin-top: .7rem; overflow: hidden;
+    border: 1px solid var(--border); border-radius: 999px;
+    background: linear-gradient(to right, rgba(28,138,76,.12) 0 70%, rgba(219,164,28,.16) 70% 90%, rgba(194,59,59,.2) 90% 100%);
+  }
+  .adc-fill {
+    position: absolute; inset: 0 auto 0 0; width: 0; border-radius: inherit;
+    background: #1c8a4c;
+    transition: width .12s linear;
+  }
+  .adc-meter.warning-level .adc-fill { background: #dba41c; }
+  .adc-meter.high-level .adc-fill { background: #c23b3b; }
+  .adc-reference {
+    position: absolute; z-index: 1; top: -2px; bottom: -2px; left: 5%;
+    width: 2px; background: var(--text); box-shadow: 0 0 0 1px var(--card-bg);
+  }
+  .adc-scale { display: flex; justify-content: space-between; gap: .5rem; margin-top: .35rem; color: var(--muted); font-size: .68rem; }
+  .adc-warning {
+    margin-top: .65rem; padding: .55rem .7rem; border-radius: .5rem;
+    background: rgba(194,59,59,.14); color: var(--bad); font-size: .82rem; font-weight: 700;
+  }
+  .adc-warning[hidden] { display: none; }
+  .adc-meter.clipped { border-color: var(--bad); }
+  .adc-meter.clipped .adc-fill { background: #c23b3b; }
+  .adc-meter.stale .adc-meter-readout span { color: var(--muted); }
   .monitor-grid {
     display: grid; grid-template-columns: minmax(260px, .9fr) minmax(340px, 1.35fr);
     gap: 1rem; align-items: stretch;
@@ -270,6 +301,28 @@
         <div class="signal-metric"><span>SNR</span><strong id="rttySnr">18.4 dB</strong></div>
         <div class="signal-metric"><span>Bit sync</span><strong id="rttySync">Locked</strong></div>
       </div>
+
+      <section class="card adc-meter stale" id="adcMeter" aria-labelledby="adcMeterTitle">
+        <div class="adc-meter-head">
+          <h3 id="adcMeterTitle">RX ADC input level · GPIO34</h3>
+          <div class="adc-meter-readout">
+            <strong id="adcLevelValue">—%</strong>
+            <span id="adcLevelState">Waiting for ADC samples</span>
+          </div>
+        </div>
+        <div class="adc-track" id="adcLevelMeter" role="meter" aria-label="ADC audio peak level"
+             aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div class="adc-fill" id="adcLevelFill"></div>
+          <span class="adc-reference" aria-hidden="true"></span>
+        </div>
+        <div class="adc-scale">
+          <span>0%</span><span>5% · RX noise reference</span><span>100% · full scale</span>
+        </div>
+        <div class="hint">Peak audio amplitude relative to the ADC input range. Adjust receiver audio so no-signal RX noise is approximately at 5%; the upper range is red.</div>
+        <div class="adc-warning" id="adcOverloadWarning" role="alert" aria-live="assertive" hidden>
+          ADC OVERLOAD — reduce receiver audio level
+        </div>
+      </section>
 
       <div class="monitor-grid">
         <article class="monitor-panel">
@@ -409,6 +462,73 @@
         </div>
       </div>
 
+      <h2>TCI AFSK audio</h2>
+      <div class="field">
+        <label><input type="checkbox" id="tciEnabled">Enable TCI audio TX</label>
+        <div class="hint">Sends RTTY AFSK audio to a TCI radio while the direct FSK output remains active.</div>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label for="tciServerIp">TCI server IPv4 address</label>
+          <input type="text" id="tciServerIp" maxlength="15" required>
+        </div>
+        <div class="field">
+          <label for="tciPort">TCI server port</label>
+          <input type="number" id="tciPort" min="1" max="65535" required>
+        </div>
+        <div class="field">
+          <label for="tciReceiver">Transceiver index</label>
+          <input type="number" id="tciReceiver" min="0" max="15" required>
+        </div>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label for="tciMarkHz">Mark tone (Hz)</label>
+          <input type="number" id="tciMarkHz" min="300" max="3000" required>
+        </div>
+        <div class="field">
+          <label for="tciSpaceHz">Space tone (Hz)</label>
+          <input type="number" id="tciSpaceHz" min="300" max="3000" required>
+          <div class="hint">Defaults to 2125/2295 Hz; the selected tones are editable.</div>
+        </div>
+        <div class="field">
+          <label for="tciSampleRate">Audio sample rate</label>
+          <select id="tciSampleRate">
+            <option value="8000">8 kHz</option>
+            <option value="12000">12 kHz</option>
+            <option value="24000">24 kHz</option>
+            <option value="48000">48 kHz</option>
+          </select>
+        </div>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label for="tciSampleFormat">Sample format</label>
+          <select id="tciSampleFormat">
+            <option value="0">Int16</option>
+            <option value="1">Int24</option>
+            <option value="2">Int32</option>
+            <option value="3">Float32</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="tciChannels">Audio channels</label>
+          <select id="tciChannels">
+            <option value="1">Mono</option>
+            <option value="2">Stereo</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="tciSamples">Samples per TCI frame</label>
+          <input type="number" id="tciSamples" min="100" max="2048" required>
+          <div class="hint">Must represent at least 10 ms at the selected sample rate.</div>
+        </div>
+        <div class="field">
+          <label for="tciBufferTimeoutMs">Audio buffer timeout (ms)</label>
+          <input type="number" id="tciBufferTimeoutMs" min="50" max="500" required>
+        </div>
+      </div>
+
       <h2>Network</h2>
       <div class="row">
         <div class="field">
@@ -527,6 +647,18 @@
     document.getElementById('liveLcdText').checked = !!cfg.liveLcdText;
     document.getElementById('uart2Mode').value = cfg.uart2Mode || 'fsk2';
     document.getElementById('cwSpeedWpm').value = cfg.cwSpeedWpm || 20;
+    var tci = cfg.tci || {};
+    document.getElementById('tciEnabled').checked = !!tci.enabled;
+    document.getElementById('tciServerIp').value = tci.serverIp || '192.168.1.100';
+    document.getElementById('tciPort').value = tci.port || 50001;
+    document.getElementById('tciReceiver').value = tci.receiver || 0;
+    document.getElementById('tciMarkHz').value = tci.markHz || 2125;
+    document.getElementById('tciSpaceHz').value = tci.spaceHz || 2295;
+    document.getElementById('tciSampleRate').value = String(tci.sampleRate || 48000);
+    document.getElementById('tciSampleFormat').value = String(tci.sampleFormat || 0);
+    document.getElementById('tciChannels').value = String(tci.channels || 1);
+    document.getElementById('tciSamples').value = tci.samples || 480;
+    document.getElementById('tciBufferTimeoutMs').value = tci.bufferTimeoutMs || 50;
     var net = cfg.network || {};
     document.getElementById('hostname').value = net.hostname || '';
     dhcpCheckbox.checked = !!net.dhcp;
@@ -557,6 +689,19 @@
       liveLcdText: document.getElementById('liveLcdText').checked,
       uart2Mode: document.getElementById('uart2Mode').value,
       cwSpeedWpm: parseInt(document.getElementById('cwSpeedWpm').value, 10),
+      tci: {
+        enabled: document.getElementById('tciEnabled').checked,
+        serverIp: document.getElementById('tciServerIp').value,
+        port: parseInt(document.getElementById('tciPort').value, 10),
+        receiver: parseInt(document.getElementById('tciReceiver').value, 10),
+        markHz: parseInt(document.getElementById('tciMarkHz').value, 10),
+        spaceHz: parseInt(document.getElementById('tciSpaceHz').value, 10),
+        sampleRate: parseInt(document.getElementById('tciSampleRate').value, 10),
+        sampleFormat: parseInt(document.getElementById('tciSampleFormat').value, 10),
+        channels: parseInt(document.getElementById('tciChannels').value, 10),
+        samples: parseInt(document.getElementById('tciSamples').value, 10),
+        bufferTimeoutMs: parseInt(document.getElementById('tciBufferTimeoutMs').value, 10)
+      },
       network: {
         hostname: document.getElementById('hostname').value,
         dhcp: dhcpCheckbox.checked,
@@ -826,6 +971,7 @@
   var connText = document.getElementById('connText');
   var backoffMs = 1000;
   var heartbeatTimer = null;
+  var lastAdcUpdateAt = 0;
 
   function setConnected(connected) {
     connDot.classList.toggle('connected', connected);
@@ -854,6 +1000,47 @@
     }
   }
 
+  function setAdcUnavailable(message) {
+    var panel = document.getElementById('adcMeter');
+    panel.classList.add('stale');
+    panel.classList.remove('clipped');
+    panel.classList.remove('warning-level', 'high-level');
+    document.getElementById('adcLevelValue').textContent = '—%';
+    document.getElementById('adcLevelState').textContent = message;
+    document.getElementById('adcLevelMeter').setAttribute('aria-valuenow', '0');
+    document.getElementById('adcLevelFill').style.width = '0%';
+    document.getElementById('adcOverloadWarning').hidden = true;
+  }
+
+  function applyAdc(data) {
+    if (!data.available || !Number.isFinite(data.levelPct)) {
+      lastAdcUpdateAt = 0;
+      setAdcUnavailable('ADC data unavailable');
+      return;
+    }
+
+    var level = Math.max(0, Math.min(100, Math.round(data.levelPct)));
+    var clipped = data.clipped === true;
+    var panel = document.getElementById('adcMeter');
+    panel.classList.remove('stale');
+    panel.classList.toggle('clipped', clipped);
+    panel.classList.toggle('warning-level', !clipped && level >= 70 && level < 90);
+    panel.classList.toggle('high-level', level >= 90);
+    document.getElementById('adcLevelValue').textContent = level + '%';
+    document.getElementById('adcLevelState').textContent = clipped ? 'Overload detected' : 'Live peak level';
+    document.getElementById('adcLevelMeter').setAttribute('aria-valuenow', String(level));
+    document.getElementById('adcLevelFill').style.width = level + '%';
+    document.getElementById('adcOverloadWarning').hidden = !clipped;
+    lastAdcUpdateAt = performance.now();
+  }
+
+  setInterval(function () {
+    if (lastAdcUpdateAt && performance.now() - lastAdcUpdateAt > 1200) {
+      lastAdcUpdateAt = 0;
+      setAdcUnavailable('No live ADC data');
+    }
+  }, 500);
+
   function connectWs() {
     var proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
     var ws = new WebSocket(proto + location.host + '/ws');
@@ -868,6 +1055,7 @@
       var data;
       try { data = JSON.parse(evt.data); } catch (e) { return; }
       if (data.type === 'status') applyStatus(data);
+      else if (data.type === 'adc') applyAdc(data);
       else if (data.type === 'heartbeat') {
         document.getElementById('sysHeap').textContent = Math.round(data.heapFree / 1024) + ' KB';
         document.getElementById('sysLink').textContent = data.linkUp ? 'up' : 'down';

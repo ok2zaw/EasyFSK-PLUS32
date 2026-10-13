@@ -7,11 +7,12 @@ FSK/PTT bit-timing discipline, and add wired LAN.
 ## Repo / project setup
 
 - **EasyFSK-PLUS (AVR/Nano) stays as-is, untouched** — not merged with the
-  ESP32 work. **New ESP32/Impero32 repo: https://github.com/ok2zaw/EasyFSK-PLUS32
-  (confirmed by user, `.git` remote verified reachable — `git ls-remote`
-  succeeds, currently empty/no refs yet, i.e. freshly created and ready
-  to receive the first commit).** This design doc describes that new
-  repo's architecture, not a branch of the existing one.
+  ESP32 work. **The separate ESP32/Impero32 repository is
+  https://github.com/ok2zaw/EasyFSK-PLUS32.** It is now an initialized,
+  actively developed project with a PlatformIO build, host-side test
+  suites, and CI; it is not an empty repository awaiting its first commit.
+  This design doc describes that repository's architecture, not a branch
+  of the AVR project.
 
 ## Hardware: confirmed
 
@@ -73,8 +74,8 @@ FSK/PTT bit-timing discipline, and add wired LAN.
   an OTA-capable partition scheme (two ~1.9MB app slots + a small
   LittleFS partition for `/config.json`) from the start as cheap
   insurance — even before OTA itself is implemented, since the flash is
-  there either way. The current verified release build uses 968,477 bytes of
-  its 1,966,080-byte application slot (49.2%) and 45,864 bytes of RAM
+  there either way. The current verified release build uses 971,821 bytes of
+  its 1,966,080-byte application slot (49.4%) and 45,904 bytes of RAM
   (14.0%). 16MB-revision boards stay fully compatible (just unused
   headroom), so one firmware build target covers both revisions.
 
@@ -192,7 +193,8 @@ FSK/PTT bit-timing discipline, and add wired LAN.
 superseded in part when the independent UART2/Winkey input was implemented.
 The current firmware moves `CPU_INH_PIN` from GPIO15 to input-only GPIO35
 (therefore requiring an external pull-up), assigns UART2 TX/RX to GPIO15/36,
-and still drives `LED_RX_PIN` on GPIO2 plus the reserved `ON_PIN` on GPIO14.
+uses GPIO34 for the RX audio ADC monitor (added 2026-10-13), and still drives
+`LED_RX_PIN` on GPIO2 plus the reserved `ON_PIN` on GPIO14.
 The later MCP23017/encoder plan remains future work: once implemented it will
 move the RX LED to the expander, remove `ON_PIN`, and reuse GPIO2/GPIO14 for
 the encoder. `include/Pins.h` and the README's GPIO table are authoritative
@@ -205,40 +207,34 @@ for the firmware that exists today.
 | `PTT_PA_PIN` (safety-critical, must default LOW at boot) | MOSI / GPIO13 | No strapping role — the only clean pin among the SPI-labeled four |
 | `FSK_PIN` | OUT2 / GPIO5 | Technically a strapping pin (SDIO slave timing) but that role is irrelevant to boot-mode selection and its required state is satisfied by the internal pull-up by default — much lower risk category than GPIO0/2/12/15 |
 | `CPU_INH_PIN` (current implementation; external pull-up mandatory) | ADC2 / GPIO35 | Moved from GPIO15 to free UART2 TX; input-only and has no internal pull resistor |
+| `RX_AUDIO_ADC_PIN` | ADC1 / GPIO34 | RX audio input, ADC1 channel 6, sampled by the DMA monitor |
 | `UART2_TX_PIN` | CS / GPIO15 | Second hardware UART, mode-switched between FSK2 and Winkey |
 | `UART2_RX_PIN` | GPIO36 | Second hardware UART RX; input-only is suitable, no pull resistor available |
-| `ENC_A_PIN` (digipot-trim rotary encoder, quadrature A) | OUT1 / GPIO2 | **Decided 2026-09-02.** Freed by moving `LED_RX_PIN` to the MCP23017 (see below); decoded via the ESP32's hardware **PCNT** peripheral, not polled. Encoder contacts idle HIGH (pulled up) when not being turned, so the "avoid pulling low at reset" caution is satisfied in normal rest position at boot. |
-| `ENC_B_PIN` (digipot-trim rotary encoder, quadrature B) | CLK / GPIO14 | **Decided 2026-09-02.** Freed by removing `ON_PIN`; no boot-relevant strapping concern for a post-boot PCNT input. |
+| `LED_RX_PIN` (current implementation) | OUT1 / GPIO2 | RX indicator is still a direct ESP32 GPIO; the MCP23017 move is planned only |
+| `ON_PIN` (current implementation; unused) | CLK / GPIO14 | Reserved/unused, matching the AVR original |
+| `ENC_A_PIN` (planned encoder quadrature A; not implemented) | OUT1 / GPIO2 | Planned to replace the current GPIO2 RX LED after that LED moves to MCP23017; intended to use ESP32 PCNT |
+| `ENC_B_PIN` (planned encoder quadrature B; not implemented) | CLK / GPIO14 | Planned for the encoder after removing the current unused `ON_PIN` assignment |
 | *(reserved, avoid using)* | MISO / GPIO12 | **Deliberately left unconnected.** This is MTDI, the flash-voltage-select strap — the one genuinely risky pin (wrong flash voltage detection at boot, not just a cosmetic/log-verbosity issue like the others). With outputs free to assign, there's no reason to touch it. |
 
-**2026-09-02 pin churn**: `LED_RX_PIN` (RX indicator LED) moved off
-OUT1/GPIO2 onto the MCP23017 I2C expander (see the LED bargraph section
-below — it's now a 12th MCP23017 output alongside the 11 bargraph LEDs),
-and `ON_PIN` (previously CLK/GPIO14, reserved/unused) was removed from
-the design entirely — freeing OUT1/GPIO2 and CLK/GPIO14. Those two freed
-pins were immediately reassigned, same day, to the digipot-trim **rotary
-encoder's quadrature A/B lines** (see the table above and the digipot
-section below): `ENC_A_PIN`/OUT1/GPIO2 and `ENC_B_PIN`/CLK/GPIO14,
-decoded via the ESP32's hardware **PCNT** peripheral rather than I2C
-polling — a direct upgrade over the earlier "put the encoder on the
-MCP23017 and poll it" plan, since PCNT decodes quadrature transitions in
-hardware with no risk of missing a fast turn between polls (the "honest
-trade-off" flagged in the original MCP23017-encoder plan no longer
-applies to A/B; it may still apply to an optional pushbutton, see the
-digipot section).
+The `ENC_A_PIN`/`ENC_B_PIN` rows are future assignments, not concurrent
+with the current `LED_RX_PIN`/`ON_PIN` definitions. The firmware's actual
+assignments are in `include/Pins.h`.
 
-This now uses 6 of the 7 available J1 GPIO-capable pins (OUT1-3 + MOSI/
-CS + CLK), deliberately leaving GPIO12 (MISO) unused as the one pin
-worth avoiding outright — back to "every GPIO assigned or deliberately
-avoided," just with the encoder now occupying the two pins that briefly
-came free. Combined with the tuning-indicator ADC input (GPIO34, see
-below), GPIO35/36 remain spare but are input-only (no internal pull), so
-they cannot drive an output device. **No free direct J1 GPIO remains** —
-any further new physical control again defaults to the MCP23017 I2C
-expander, which still has 4 spare pins after the bargraph + `LED_RX_PIN`
-(see the LED bargraph section) — e.g. an optional encoder pushbutton, or
-reading the RX/TX digipot-select switch position, both discussed in the
-digipot section below.
+**2026-09-02 planned pin allocation (not implemented in the current
+firmware):** the design moves `LED_RX_PIN` from OUT1/GPIO2 to the
+MCP23017, removes the unused `ON_PIN` on GPIO14, and assigns GPIO2/GPIO14
+to the encoder's quadrature A/B inputs, decoded with the ESP32's hardware
+PCNT peripheral. The current `include/Pins.h` still uses GPIO2 for
+`LED_RX_PIN` and reserves GPIO14 as unused `ON_PIN`; do not wire the
+planned encoder allocation as if the firmware already supported it.
+
+GPIO35 and GPIO36 are no longer spare: the current firmware uses GPIO35
+for `CPU_INH_PIN` (external pull-up required) and GPIO36 for UART2 RX.
+GPIO34 remains the proposed, currently unassigned ADC audio input. The
+planned encoder and the current assignments together use the available
+direct pins while deliberately leaving GPIO12 (MISO) unused. Any further
+physical controls remain planned for the MCP23017, whose allocation is
+described below; the expander driver itself is not implemented yet.
 
 ## Web UI architecture (config + monitoring + manual TX)
 
@@ -306,8 +302,9 @@ digipot section below.
     largely as-is.
 - **Do NOT adopt** — Band Magic-specific domain functionality that has no
   EasyFSK equivalent: antenna/band profile switching, IP-relay bit-pattern
-  math, BCD inputs, CAT/TCI/FlexRadio/TrxNet integration, broadcast-to-LAN,
-  OTA update flow (not yet decided for EasyFSK either way).
+  math, BCD inputs, CAT/FlexRadio/TrxNet integration, broadcast-to-LAN,
+  and its OTA update flow. TCI is implemented as an optional parallel
+  ExpertSDR3 transmit path; see the dedicated feature section at the end.
 - **Proposed EasyFSK page/tab structure** to carry this visual treatment:
   1. **Status / Monitoring** — live via WebSocket: callsign, PTT source,
      RX/TX/INHIBIT state, live TX text, LAN link state.
@@ -347,34 +344,40 @@ the firmware already enforces:
     `network.dns` — strings, required/used only when `dhcp` is `false`;
     ignored (but still stored) when `dhcp` is `true`. The Configuration
     page shows/hides these fields based on the DHCP toggle.
-- **New for the tuning indicator / RTTY decoder (added 2026-09-02,
-  implemented in commit `2850deb`)**:
+- **Planned for the tuning indicator / RTTY decoder (not in the current
+  firmware config)**:
   - `tune.enabled` — bool, default `false`.
   - `tune.shiftHz` — int, 50-1000, default 170. Informational label only.
   - `tune.markHz`, `tune.spaceHz` — int, 300-3000 each, must differ,
     defaults 2125/2295. The actual two frequencies the Goertzel/I-Q
-    detector (and, once built, the RTTY decoder) look for. Deliberately
+    detector (and, once built, the RTTY decoder) would look for. Deliberately
     plain editable fields rather than a Shift-driven preset dropdown,
     since the Shift→tone-pair convention for anything other than
     170Hz@2125/2295Hz varies by software/club/region and shouldn't be
-    hard-coded as if it were standardized.
-- **New for the RX/TX digipot trim (added 2026-09-02, persist+restore
-  confirmed the same day — not yet implemented in code)**:
+    hard-coded as if it were standardized. Earlier notes saying these
+    fields were implemented are stale: current `Config`/`ConfigStore`
+    do not contain `tune.*`.
+- **Planned for the RX/TX digipot trim (not in the current firmware
+  config or code)**:
   - `rxLevelPct`, `txLevelPct` — int, 0-100 each, default TBD (probably
-    50, pending the digipot part decision). **Persisted so the last-set
-    trim survives a power cycle (confirmed)** — firmware writes these
-    back to the digipot's wiper right after init at boot, before
-    anything else touches it (see the "power-holding but volatile"
-    caveat in the digipot section — the chip itself can't remember
-    across power loss, so firmware has to do it). Updated by firmware
-    whenever the encoder changes the wiper (not edited directly through
-    the Configuration form — see the routes/WS notes below for how they
-    reach the UI).
-- **New for CW keying / Winkey emulation (added 2026-09-03; superseded
+    50, pending the digipot part decision). The intended behavior is to
+    persist and restore the levels once a digipot and encoder are
+    implemented; no wiper writes or level readouts exist in the current
+    firmware.
+- **Current CW keying / Winkey configuration (implemented)**:
+  - `uart2Mode` — enum `"fsk2" | "cw"`, default `"fsk2"`. This selects
+    UART2's role only; the primary UART1/ESP32 UART0 link remains
+    unconditionally FSK/RTTY.
+  - `cwSpeedWpm` — integer, 5-99, default 20, persisted as the
+    power-on/default speed. Winkey speed commands change the running
+    speed only and do not write the host's choice to flash. The planned
+    encoder does not exist yet.
+- **Historical, superseded CW configuration (do not implement)** (added
+  2026-09-03; superseded
   2026-09-27 — see "UART1/UART2 split" in the CW/Winkey section. As
-  implemented, the field is `uart2Mode: "fsk2" | "cw"` and selects UART2's
-  role; UART0/J1 always stays the RTTY link. The original text is kept
-  below for history)**:
+  implemented, the field is `uart2Mode: "fsk2" | "cw"` and selects
+  UART2's role; UART0/J1 always stays the RTTY link. This entry is kept
+  only as decision history)**:
   - `serialMode` — enum `"rtty" | "cw"`, default `"rtty"`. Selects which
     protocol UART0/J1's RXD-TXD link currently speaks — see the "CW
     keying via Winkey protocol emulation" section for why these can't
@@ -382,16 +385,10 @@ the firmware already enforces:
     1200/8-N-2). Settable from the Configuration page (a toggle) and
     from the encoder pushbutton's long-press gesture — the web toggle
     and the physical long-press both just write this same field.
-  - `cwSpeedWpm` — int, 5-99, default TBD (added 2026-09-03, matching
-    the `rxLevelPct`/`txLevelPct` pattern). **The actual value the CW
-    keying engine uses (confirmed 2026-09-03, not display-only)** —
-    written by the encoder in CW-speed mode, and overwritten by the
-    host's Winkey speed command (`<02><nn>`, `nn` 5-99); `nn == 0`
-    ("speed from potentiometer") leaves it as-is instead of overwriting
-    it. Either writer also triggers the LCD live-text readout, same
-    mechanism as RX/TX level (see "LCD feedback while trimming RX/TX
-    level or CW speed" above). Whether it's persisted/restored at boot
-    like `rxLevelPct`/`txLevelPct` is still **not yet decided**.
+  - The former `serialMode` field and the encoder-based live speed
+    control described in this historical draft are not the current
+    configuration/API. See the implemented fields above and the
+    UART1/UART2 split below.
 
 Endpoints:
 
@@ -430,9 +427,11 @@ Endpoints:
   - `POST /api/tx/end` → posts `TX_END` (`]`): buffered switch to RX
     once the buffer drains.
   - `POST /api/tx/abort` → posts `TX_ABORT` (`\`): immediate switch to
-    RX, buffer cleared. (User confirmed: Send page gets explicit End
-    and Abort buttons alongside Send, matching N1MM's {TX}/{END}/{ESC}
-    trio, not just a bare Send box.)
+    the end-of-data path and clears the pending buffer; the established
+    PA/PTT tail sequence still runs before RX. Only `CPU_INH_PIN` forces
+    both outputs LOW immediately. (User confirmed: Send page gets explicit
+    End and Abort buttons alongside Send, matching N1MM's
+    {TX}/{END}/{ESC} trio, not just a bare Send box.)
 
 `WebSocket /ws` — **server → client push only.** The client never sends
 TX commands over the socket; those go through the REST TX actions above
@@ -442,21 +441,20 @@ mid-reconnect. Two message types:
 - Pushed immediately on every state-change event (mirrors what already
   drives the LCD today):
   `{"type":"status","state":"idle"|"tx","pttActive":bool,"paActive":bool,`
-  `"pttSource":"serial"|"rts"|"web","inhibited":bool,"callsign":"...",`
+  `"pttSource":"serial"|"uart2fsk"|"winkey"|"rts"|"web",`
+  `"inhibited":bool,"callsign":"...",`
   `"char":"H","bufferPending":12}`
-  — **extended 2026-09-02 (later the same day)** with two more fields,
-  pushed on every wiper change exactly like the fields above already
-  are: `"rxLevelPct":67,"txLevelPct":42` (see the new "Also shown on
-  the web UI" note in the digipot section for the Configuration-page
-  display this feeds).
-  — **extended again 2026-09-03** with `"signalQualityPct":82`, pushed
-  on the same cadence as the other `TuneMonitor`-derived fields, feeding
-  the Tune page's Signal Quality bar (see the "Confirmed: Signal
-  Quality metric" section above for the SNR-based calculation).
+  This is the currently implemented shape, with UART2's FSK and Winkey
+  sources in addition to UART1, RTS, and web TX. The previously proposed
+  `rxLevelPct`, `txLevelPct`, and `signalQualityPct` fields are not
+  present yet because the digipot and `TuneMonitor` features are not
+  implemented.
 - A lightweight heartbeat roughly every 1s regardless of TX activity, so
   the UI's connection indicator doesn't depend on RTTY traffic ever
   happening:
-  `{"type":"heartbeat","uptimeMs":...,"heapFree":...,"linkUp":true}`
+  `{"type":"heartbeat","uptimeMs":...,"heapFree":...,"linkUp":true}`.
+  These status and heartbeat messages are implemented; no Tune-tab
+  telemetry or binary waterfall frames are emitted yet.
 
 Page ↔ endpoint mapping:
 1. **Status/Monitoring** — connects `/ws`, falls back to
@@ -551,53 +549,46 @@ a request that arrives while the transmitter is busy. The rules live in
   actually sending.** During a tail or a CW session it sends its own
   `[text]`, which is then deferred as above.
 
-## Implementation status (first pass, 2026-09-01)
+## Current implementation status (2026-10-12)
 
-- User said "muzes zacit" — implementation started and a full first pass
-  of the whole architecture above now exists in
-  https://github.com/ok2zaw/EasyFSK-PLUS32 (branch `main`), locally
-  committed (commit `0af459b`, "Initial ESP32 firmware skeleton
-  (EasyFSK-PLUS32)"). **Push to GitHub is currently blocked** — this
-  session's git proxy reports `ok2zaw/EasyFSK-PLUS32 is not in this
-  session's authorized repository set`. The commit exists locally and is
-  ready to push; either the repo needs adding to this session's
-  authorized sources, or the user pushes it themselves (`git push -u
-  origin main`) from a clone with their own GitHub credentials. As a
-  stopgap the full working tree (incl. the local commit) was also handed
-  to the user as a zip so they can push from their own PC.
-- Files delivered: `platformio.ini` (env `impero32`, `board_build.
-  filesystem = littlefs`), `partitions.csv` (custom 4MB OTA-capable
-  table), `include/Pins.h` (GPIO map from the table above), `Config.h/
-  .cpp`, `Baudot.h/.cpp` (ITA2 table + `SendBuffer`, byte-verified
-  against the AVR source), `FskTimer.h/.cpp`, `TxManager.h/.cpp`,
-  `SerialControl.h/.cpp`, `StatusDisplay.h/.cpp` (LiquidCrystal_I2C,
-  SDA=32/SCL=33), `ConfigStore.h/.cpp`, `WebInterface.h/.cpp`,
-  `data/index.html` (the full web UI: 4 tabs, Lora+Montserrat fonts,
-  `--text:#120d38`/`--accent:#dba41c` tokens, WS reconnect/backoff,
-  dark-mode toggle persisted client-side), `main.cpp` (ETH PHY macros
-  defined immediately before `#include <ETH.h>`, per the current
-  arduino-esp32 3.x example — `ETH.begin()` itself now takes no
-  arguments), `README.md`, `.vscode/extensions.json` (recommends the
-  PlatformIO IDE extension for continuing in VS Code).
-- **Build verification**: this sandbox's network policy blocks both
-  PlatformIO's registry (`api.registry.platformio.org`) and Arduino's
-  package/tool indexes (`downloads.arduino.cc`), so neither `pio run`
-  nor a full `arduino-cli` ESP32 3.x core install could be completed
-  here. Verified instead: every `.cpp`/`.h` file has balanced braces/
-  parens/brackets, and each module was reviewed line-by-line against
-  the AVR source for logical fidelity. **The first `pio run` in VS Code
-  is the real first compile** — expect it may need small fixes.
-- Next step for the user: open the repo in VS Code with the PlatformIO
-  IDE extension, run `pio run`, fix whatever the real toolchain flags,
-  then flash and bring up hardware (Ethernet link, LCD, relays) one
-  piece at a time.
-- **2026-09-02 update**: added `TuneConfig` (`tune.enabled`/`shiftHz`/
-  `markHz`/`spaceHz`) to `Config`/`ConfigStore`/the web Configuration
-  page, per the "New for the tuning indicator" entry above — commit
-  `2850deb`, "Add tuning-indicator Shift/Mark/Space fields to config and
-  web UI". These fields don't do anything yet (no `TuneMonitor`/decoder
-  firmware consumes them yet), but the config surface + validation is
-  ready for when that lands. Updated zip re-sent to the user.
+This section supersedes the dated 2026-09-01 bring-up notes and any
+earlier statements that the repository is empty, the first ESP32 compile
+is still pending, or the tuning fields already exist in the current config.
+
+- The current firmware targets PlatformIO `espressif32 @ 7.1.3`, which
+  supplies Arduino-ESP32 2.0.17. The timer code intentionally uses that
+  core's `timerBegin(timer, divider, countUp)`,
+  `timerAttachInterrupt(..., edge)`, and `timerAlarmWrite` API. Upgrade
+  the platform and port both timer modules together; the 3.x timer API
+  described in some earlier research notes is not what this build uses.
+- The firmware build is verified in CI. The recorded release build uses
+  971,821 bytes of the 1,966,080-byte application slot (49.4%) and
+  45,904 bytes of RAM (14.0%). CI also runs the host-side Unity tests;
+  the current README records 127 passing tests. Hardware bring-up and
+  timing validation on an actual Impero32 remain outstanding.
+- Implemented: direct GPIO FSK transmit and PTT/PA sequencing, UART1
+  RTTY control, UART2 selectable as FSK2 or Winkey, the CW/Morse engine,
+  the web status/configuration/backup/manual-TX endpoints, and
+  LittleFS/JSON configuration. Configuration persistence uses a
+  temporary file and atomic replacement; network changes take effect
+  after restart. The current web UI does not expose Tune, RX/TX trim, or
+  encoder controls.
+- UART2 Winkey command parsing and the CW path are implemented. The
+  hardware `MODE_SEL_PIN` is not: `ModeSelect` currently tracks the
+  requested state only because the MCP23017 driver and hardware are not
+  present. No encoder, digipot, ADC audio receiver, RTTY decoder, LED
+  bargraph, Lissajous, or waterfall is implemented.
+- The live persisted `Config` currently contains the AVR-compatible
+  transmit settings, network settings, `uart2Mode` (default `fsk2`), and
+  `cwSpeedWpm` (default 20). The configured CW speed is restored at
+  startup; Winkey host speed commands change the running engine speed
+  without persisting each host command. There are no `tune.*`,
+  `rxLevelPct`, or `txLevelPct` fields in the firmware yet.
+- `include/Pins.h`, `include/Config.h`, `src/`, `data/index.html`,
+  `platformio.ini`, the CI workflow, and the README describe the
+  implementation that currently exists. The remaining sections below
+  are decisions/research for planned work unless explicitly marked
+  implemented.
 
 ## Planned feature: RTTY audio tuning indicator + spectrum waterfall (confirmed 2026-09-02, not started)
 
@@ -610,25 +601,27 @@ scopes worked. A scrolling spectrum ("waterfall") display was then
 discussed as a natural extension. **User has confirmed both the
 Lissajous tuning indicator and the waterfall as planned features — this
 whole section is now "yes, build it," not just an idea under review.
-Research and architecture sketched below; no DSP/ADC code written yet
-(only the config fields, see Implementation status above).** This is a
+Research and architecture sketched below; no DSP/ADC code or `tune.*`
+configuration fields have been written yet.** This is a
 new module, additive to everything above, not a change to the TX path.
 
 ### Technical findings (verified via web research, not assumed)
 
 - **ADC sampling**: `analogRead()` (blocking, one-shot) is too slow/
-  jittery for audio-rate sampling. The current arduino-esp32 3.x API for
-  DMA-driven repeated sampling is **ADC continuous mode**:
-  `analogContinuous()` (setup) + `analogContinuousStart()`/`Stop()`/
-  `Deinit()` + `analogContinuousRead()`, delivered via an ISR callback
-  into a ring buffer — a thin wrapper over ESP-IDF's `adc_continuous`
-  driver. Docs: https://docs.espressif.com/projects/arduino-esp32/en/latest/api/adc.html,
-  example: https://github.com/espressif/arduino-esp32/blob/master/libraries/ESP32/examples/AnalogReadContinuous/AnalogReadContinuous.ino
-- **Continuous mode is ADC1-only.** Good fit: our free/unused pins
-  GPIO34/35/36 are all ADC1 channels (GPIO34=ADC1_CH6, GPIO35=ADC1_CH7,
-  GPIO36=ADC1_CH0) — no conflict with anything already assigned.
-  **Proposed pin: GPIO34** (J1's "ADC1" position), leaving GPIO35/36
-  spare.
+  jittery for audio-rate sampling. The firmware now uses the pinned
+  Arduino-ESP32 2.0.17 core's ESP-IDF ADC digital DMA API
+  (`adc_digi_initialize`/`adc_digi_controller_config`/
+  `adc_digi_read_bytes`) for GPIO34 at 20kHz; do not copy Arduino-ESP32
+  3.x `analogContinuous*` calls into this core unchanged. The raw samples
+  are currently consumed by the live input-level/clipping monitor. The
+  same stream remains the planned source for the RTTY detector, tuning
+  display, and FFT waterfall. Docs:
+  https://docs.espressif.com/projects/arduino-esp32/en/latest/api/adc.html
+- **Continuous mode is ADC1-only.** GPIO34/35/36 are ADC1 channels
+  (GPIO34=ADC1_CH6, GPIO35=ADC1_CH7, GPIO36=ADC1_CH0), but the current
+  firmware already assigns GPIO35 to `CPU_INH_PIN` and GPIO36 to UART2
+  RX. **Proposed audio pin: GPIO34** (J1's "ADC1" position), which is
+  currently unassigned.
 - **Sample-rate floor, real gotcha**: the ESP32's `adc_continuous`
   driver enforces a minimum `sample_freq_hz` of **20 kHz**
   (`SOC_ADC_SAMPLE_FREQ_THRES_LOW`) — you cannot ask for a "nice" 8kHz
@@ -676,10 +669,10 @@ new module, additive to everything above, not a change to the TX path.
   the figure, a correctly-tuned signal should hold it steady, matching
   how classic XY-scope RTTY tuning indicators behave.
 - **Mark/Space tone pairs: independently editable Hz fields (not a
-  preset-driven dropdown), confirmed and implemented 2026-09-02.** The
-  Configuration page's "Tuning indicator" section (commit `2850deb`) has
-  plain `Shift (Hz)` / `Mark tone (Hz)` / `Space tone (Hz)` number
-  fields, defaulting to 170/2125/2295 — the one combination treated as a
+  preset-driven dropdown), confirmed 2026-09-02.** The planned
+  Configuration-page controls are plain `Shift (Hz)` / `Mark tone (Hz)` /
+  `Space tone (Hz)` number fields, defaulting to 170/2125/2295 — the one
+  combination treated as a
   genuinely established convention. This replaced the earlier idea of a
   Shift-driven preset dropdown that would auto-fill Mark/Space for
   200/425/850Hz, since that tone-pair convention varies by software/
@@ -726,8 +719,8 @@ new module, additive to everything above, not a change to the TX path.
   the existing live-text line), and the new LED bargraph section below,
   which is itself effectively "the LCD's missing Lissajous," in hardware
   form.
-- Config: `tune.enabled`/`shiftHz`/`markHz`/`spaceHz` already implemented
-  (see Implementation status) — nothing further needed here.
+- Config: `tune.enabled`/`shiftHz`/`markHz`/`spaceHz` are proposed
+  settings, not present in current `Config` or the web UI yet.
 
 ### Confirmed: running spectrum / waterfall on the web UI (2026-09-02)
 
@@ -960,6 +953,45 @@ text — switching meaning by state: **TX text while transmitting, RX
 decoded text while idle/receiving.** This is the natural next step after
 the tuning indicator/waterfall and shares almost its entire front end.
 
+### ADC input-level meter and overload warning (confirmed 2026-10-13)
+
+- **Implemented for the live ADC meter:** GPIO34 is sampled through the
+  existing firmware's 20kHz ADC DMA path. A 400-sample window (20ms)
+  estimates the peak audio amplitude around that window's measured DC bias;
+  the result is normalized to the 12-bit ADC full-scale amplitude and
+  sent to connected browsers as a `type: "adc"` WebSocket update every
+  100ms. A raw sample within 12 counts of either ADC rail marks that
+  window clipped. The web UI shows unavailable/stale data distinctly,
+  maps the level onto the bar, and shows a prominent overload warning.
+- The RTTY decoder, Lissajous, and FFT/waterfall visuals elsewhere on
+  this page are still demonstration previews; the level meter is the
+  first live view of GPIO34 samples. The physical 9-LED MCP23017
+  bargraph/overload blink remains unimplemented because the MCP23017
+  driver and hardware path are not yet present.
+- The web UI view that presents RTTY decoding and the FFT/waterfall must
+  also show a live **ADC input-level bar**. Its purpose is to let the
+  operator set the receiver's audio level high enough for useful
+  reception without overdriving the ESP32 ADC.
+- Show the level as a percentage of the usable ADC input range, with a
+  **5% reference marker** for the approximate no-signal RX noise level.
+  The operator can adjust the RX audio level so the noise floor sits
+  around that marker. This is a setup reference, not a universal
+  calibration: actual noise and analog-front-end gain vary by receiver
+  and hardware.
+- Color the upper end of the bar **red** to make near-full-scale input
+  obvious. The meter must also detect ADC overload/clipping from samples
+  near the ADC limits; merely reaching the top of a smoothed display is
+  not enough to establish clipping.
+- On overload, visibly flag the condition in the web UI and override
+  the physical 9-LED TUNE bargraph so **all nine LEDs blink together**,
+  toggling at 500ms intervals, until the ADC is no longer overloaded.
+  This overload warning takes priority over the bargraph's normal
+  tuning indication.
+- The level meter and clipping detector consume the existing GPIO34 ADC
+  sample stream; they must not add another ADC sampling path. The
+  implementation should use a short rolling measurement window so the
+  displayed level is stable while clipping remains promptly detectable.
+
 ### Technical findings (verified via web research, not assumed)
 
 - **Standard demod approach — confirmed as the right model**: for two
@@ -1171,13 +1203,11 @@ against it. This remains a deliberate scope boundary, not a TODO.
     Status tab, similarly switching meaning with state, or a small
     separate "RX text" panel if keeping TX/RX visually distinct reads
     better. **Not yet decided which.**
-- **Config**: no new fields needed beyond what commit `2850deb` already
-  added (`tune.enabled`, `markHz`, `spaceHz`) plus the existing
-  top-level `baudRate` — the decoder is a new *consumer* of config
-  already in place, not a reason for more of it. Whether decoding
-  should have its own enable flag separate from `tune.enabled` (e.g. so
-  someone can have the Lissajous display on but decoding off, or vice
-  versa) is **not yet decided**.
+- **Config**: the current firmware has no `tune.*` fields. The future
+  decoder is expected to use the existing top-level `baudRate` plus
+  planned `tune.markHz`/`spaceHz`; whether it needs its own enable flag
+  separate from the planned `tune.enabled` setting (e.g. Lissajous on
+  but decoding off) is **not yet decided**.
 
 ### Not yet decided (RTTY decoder)
 - Whether RX decoding pauses entirely during own TX, or keeps running
@@ -1291,26 +1321,21 @@ separating before picking hardware:
 out over the two alternatives considered:
 
 - **GPIO budget was the deciding factor, and it strongly favored I2C.**
-  Per the GPIO mapping section above, this board has already assigned 6
-  of 7 J1 GPIO-capable pins, deliberately left GPIO12 unconnected (flash-
-  voltage strapping risk), and dedicated GPIO34 to the tuning-indicator
-  ADC input — leaving only GPIO35/GPIO36 spare, and **both are
-  input-only** (no internal pull, cannot drive an output at all). There
-  is, in practice, **no spare general-purpose output pin left on this
-  board** for a shift register's 3 control lines (data/clock/latch)
+  In the current firmware, GPIO15 is already UART2 TX, GPIO35 is the
+  inhibit input, and GPIO36 is UART2 RX; GPIO34 is reserved by this
+  design for future ADC audio input. GPIO12 is deliberately left
+  unconnected due to its flash-voltage strapping role. There is, in
+  practice, **no spare general-purpose output pin left on this board**
+  for a shift register's 3 control lines (data/clock/latch)
   without either reclaiming an already-assigned signal or using the
   deliberately-avoided GPIO12 — neither is attractive. This ruled out
   **74HC595**, not because the chip is bad, but because this specific
   board's pin budget doesn't have room for it. (Cascading multiple
   74HC595s for >8 outputs doesn't help the pin problem — the daisy
-  chain still needs the same 3 initial GPIOs.) **(Note: this GPIO-budget
-  argument was the state of the board before `ON_PIN` was dropped and
-  `LED_RX_PIN` was moved onto the MCP23017 (2026-09-02). GPIO2/GPIO14
-  briefly came free that same day, but were immediately reassigned to
-  the digipot-trim encoder's quadrature A/B lines — see the GPIO mapping
-  section — so the board is back to zero free direct GPIO either way.
-  The MCP23017 decision for the bargraph itself stands regardless: I2C
-  still needs zero additional pins, which remains the simpler answer.)**
+  chain still needs the same 3 initial GPIOs.) The planned future
+  encoder allocation for GPIO2/GPIO14 is not yet implemented. The
+  MCP23017 decision for the bargraph stands regardless: I2C needs zero
+  additional ESP32 GPIO pins.
 - **MCP23017 needs zero additional GPIO pins** — it sits on the
   already-existing I2C bus (SDA=GPIO32/SCL=GPIO33), the same bus the
   status LCD's PCF8574 backpack is already on. 16 GPIO pins on one chip
@@ -1466,6 +1491,12 @@ parts get ordered for the digipot BOM.
 
 ### LCD feedback while trimming RX/TX level or CW speed (confirmed 2026-09-02, extended 2026-09-03)
 
+**Current implementation note:** the encoder, digipots, and transient
+LCD readout described here are not implemented. `cwSpeedWpm` is a
+persisted configuration default and Winkey host speed commands update
+the running CW engine only; neither path currently drives an encoder
+readout on the LCD.
+
 User's idea: while the encoder is in RX-volume or TX-volume mode, the
 LCD's bottom line should show the current level as **0-100%** — a
 quick numeric readout of where the wiper sits, without needing the web
@@ -1501,14 +1532,14 @@ feeds into Winkey's own speed setting).
   transmitting) and RX decoded text (while idle/receiving, per the
   RTTY decoder section above). Adding "currently trimming a
   level/speed" needed an explicit priority/arbitration rule rather than
-  an ad hoc one — **confirmed 2026-09-02, extended 2026-09-03**:
+  an ad hoc one — **confirmed as future behavior on 2026-09-02,
+  extended 2026-09-03; not implemented**:
   1. TX active → TX text (existing rule, unchanged — highest priority;
      in CW mode this is the CW-sent text, per the CW/Winkey section's
      LCD-display bullet — same slot, same priority).
   2. **A change to the readout value** — the encoder actively turning
-     in any of its three modes (RX volume, TX volume, or CW speed), **or
-     (added 2026-09-03) `cwSpeedWpm` changing because the host changed
-     it via Winkey's own speed command** — switches the line to the
+     in any of its three modes (RX volume, TX volume, or CW speed), or
+     a future host-driven CW speed change — switches the line to the
      level/speed readout; **revert to the normal RX/TX text 2 seconds
      after the last change** (user-confirmed exact value, replacing the
      earlier "~1.5-2s, not yet confirmed" placeholder). A host-driven
@@ -1529,21 +1560,19 @@ feeds into Winkey's own speed setting).
 - **Resolved 2026-09-03 — `cwSpeedWpm` is live and bidirectional, not
   display-only.** `cwSpeedWpm` is the single value the CW keying engine
   actually uses, with two writers:
-  - **Encoder** (local): ticks in CW-speed mode set `cwSpeedWpm`
-    directly, as already described above.
+  - **Encoder** (planned): ticks in CW-speed mode would set the running
+    CW speed; the encoder hardware and handler do not exist yet.
   - **Host, via Winkey's own speed command** (`<02><nn>`, see the
-    CW/Winkey section above): an explicit `nn` in 5-99 **overwrites**
-    `cwSpeedWpm` with the host's requested speed (the host takes
-    control); `nn == 0` means "speed from potentiometer" per the
-    protocol — the engine keeps using whatever `cwSpeedWpm` already
-    holds (i.e. defers to the last encoder-set value) rather than
-    changing it.
-  Either writer updates the same value the CW engine reads, and either
-  one triggers the LCD readout (tier 2 above) — so a host-issued speed
-  change becomes visible on the LCD exactly like turning the knob does,
-  with no separate "display-only" state left to track.
+    CW/Winkey section above): an explicit `nn` in 5-99 changes the
+    running CW speed; `nn == 0` ("speed from potentiometer") leaves the
+    running speed unchanged. The host command does not overwrite the
+    persisted `cwSpeedWpm` default. No transient LCD readout is currently
+    triggered by this command.
 
 ### Also shown on the web UI (confirmed 2026-09-02, later the same day)
+
+**Not implemented yet:** the read-only level fields and live WebSocket
+updates below depend on the future digipot/encoder hardware.
 
 User confirmed the RX/TX level percentage should also appear in the
 web interface, not just the LCD.
@@ -1571,16 +1600,15 @@ web interface, not just the LCD.
   not a power cycle). Once the level becomes something the user relies
   on seeing/trusting (LCD + web), an unannounced reset to an undefined
   wiper position after every power-up is a real usability problem, not
-  just a cosmetic one. **Decided 2026-09-02 (later the same day) — yes,
-  persist and restore**: the last-set `rxLevelPct`/`txLevelPct` are
-  saved in `Config`/`config.json` (same LittleFS+JSON mechanism already
-  used for every other setting), and firmware **writes them back to the
+  just a cosmetic one. **Future behavior decided 2026-09-02 — persist
+  and restore**: the last-set `rxLevelPct`/`txLevelPct` should be saved
+  in `Config`/`config.json` (same LittleFS+JSON mechanism already used
+  for other settings), and firmware should **write them back to the
   digipot's wiper at boot** (right after the digipot is initialized,
   before `TuneMonitor`/anything else touches it), so the trim survives
-  a power cycle instead of resetting to an undefined position. This is
-  the confirmed spec now, not a proposal — see the config-fields list
-  in "Web UI: routes and JSON shapes" below, already updated with
-  `rxLevelPct`/`txLevelPct` as persisted fields.
+  a power cycle instead of resetting to an undefined position. This
+  remains a future requirement; those fields are not yet in the current
+  config or API.
 
 ## Planned feature: digital-pot (MCP4017) audio level trim for RX/TX (proposed 2026-09-02, not started)
 
@@ -1943,26 +1971,14 @@ into something that needs **zero new GPIO pins**.
   9600-baud mode (WK3 admin `0x12`) and serial echo of sent characters.
 - Which MCP23017 pin number gets `MODE_SEL_PIN` (just "the last spare
   one" so far, not assigned to a specific pin).
-- **Resolved 2026-09-03**: the encoder's "CW speed" mode adjusts
-  `cwSpeedWpm`, which **is the value the CW keying engine actually
-  uses** — confirmed bidirectional with the host's own Winkey speed
-  command (`<02><nn>`: nonzero overwrites `cwSpeedWpm`, zero/"speed
-  from potentiometer" defers to it), and either source of a change
-  shows on the LCD via the same live-text readout. See "LCD feedback
-  while trimming RX/TX level or CW speed" above for the full mechanism
-  — no longer an open question.
-- **Implemented differently, 2026-09-28 — needs the user's confirmation:**
-  the stored `cwSpeedWpm` is the **power-on/default** speed, applied at boot
-  and whenever the configured value itself changes. The host's `<02><nn>`
-  changes the **running** speed only and is not written back to the
-  config: writing it back would mean a flash write for every speed change
-  from the logger, and flash writes are refused during TX anyway. Saving
-  an unrelated setting no longer resets the running speed to the stored
-  one. Open: whether the encoder should adjust the running speed, the
-  stored default, or both. It only matters once the encoder exists.
-- Whether `cwSpeedWpm` is persisted/restored at boot like
-  `rxLevelPct`/`txLevelPct` — effectively answered by the item above: the
-  stored value is the boot default, and the running speed isn't persisted.
+- **CW speed behavior in current firmware:** persisted `cwSpeedWpm` is the
+  boot/default speed. Winkey `<02><nn>` changes the running speed only;
+  `<02><00>` leaves it unchanged, and host speed commands are not written
+  to flash. The earlier plan to have an encoder update the shared value
+  and trigger an LCD readout is not implemented.
+- **Still open for future encoder work:** whether the encoder should
+  update only the running speed, the persisted default, or both. That
+  choice does not affect the current Winkey speed-command behavior.
 
 ## Not yet decided / not yet discussed
 - Whether the onboard USB chip stays populated/wired in the final build
@@ -1975,28 +1991,103 @@ into something that needs **zero new GPIO pins**.
   pixel-parity with the reference.
 - Exact validation-error message wording — implemented with plain
   English messages, not user-reviewed.
-- Whether `POST /api/config` should later gain a partial-merge mode
-  (implemented as whole-form save only, see routes section above).
+- The web Configuration form submits the complete config object. The
+  backend validation/merge path also accepts omitted fields and preserves
+  their current values.
 - Which specific opto-isolated USB-serial adapter to use.
 - Ring-buffer depth (implemented: 4) and FreeRTOS task priorities
   (implemented: TxManager `configMAX_PRIORITIES - 2` on core 1, web push
   task priority 1 on core 0) — not re-confirmed with the user, but
   consistent with the large timing margins involved.
-- **GPIO2 (OUT1) and GPIO14 (CLK) briefly came free on 2026-09-02**
-  (`ON_PIN` removed, `LED_RX_PIN` moved to the MCP23017) and were
-  reassigned the same day to the digipot-trim encoder's `ENC_A_PIN`/
-  `ENC_B_PIN` — see the GPIO mapping section and the digipot section's
-  encoder-GPIO subsection. No direct J1 GPIO remains free as of this
-  writing.
-- **Whether the digipot-trim encoder has/needs a pushbutton — decided
-  2026-09-02: yes**, used to cycle the encoder's target mode (RX volume/
-  TX volume/CW speed); lands on a spare MCP23017 pin (see the
-  encoder-GPIO subsection), not a new direct GPIO.
-- **CW speed (the encoder's third mode) is an unscoped future feature**
-  — see the "encoder mode-select LEDs" section. No digipot, no firmware,
-  no requirements gathered yet; flagged for a future design pass.
+- **Future encoder pin allocation (not implemented):** the plan is to
+  move `LED_RX_PIN` from GPIO2 to the MCP23017, remove unused `ON_PIN`
+  on GPIO14, and use GPIO2/GPIO14 for the encoder A/B inputs. Until that
+  work lands, current firmware still defines `LED_RX_PIN` on GPIO2 and
+  reserves GPIO14 as `ON_PIN`; see the GPIO mapping table above.
+- The encoder pushbutton and its mode-cycle/long-press gestures are
+  decided future hardware/firmware work. `cwSpeedWpm` and Winkey CW
+  speed control already exist; encoder-based adjustment of that speed
+  does not.
 - **Which digipot approach replaces the now-superseded DPDT-switch
   plan** — single dual-wiper chip (AD5243/MCP4651) vs. a
   firmware-controlled I2C mux (TCA9548A/PCA9548A) — see the
   "Architectural implication" note in the mode-select LED section and
   the updated "Alternative hardware solution" section; not yet decided.
+
+## AFSK-over-TCI parallel TX path (implemented 2026-10-12; hardware verification pending)
+
+This is an optional transmit path for SunSDR/ExpertSDR3-compatible
+transceivers. It adds software-generated AFSK audio sent over the existing
+wired Ethernet connection using Expert Electronics' TCI v2.0 protocol.
+It does **not** replace the existing direct-GPIO FSK output: both outputs
+remain active for the same RTTY transmission, as explicitly confirmed by
+the user. The direct FSK output remains the radio-independent baseline.
+
+### TCI transport and audio flow
+
+- The transceiver/ExpertSDR3 acts as the TCI WebSocket server; this device
+  is a TCP/WebSocket client on the existing wired LAN. No Wi-Fi interface
+  is required. The client uses `links2004/WebSockets @ 2.4.1`; its network
+  loop runs in a separate low-priority task on core 0.
+- The client configures audio with TCI text commands:
+  `AUDIO_STREAM_SAMPLE_TYPE`, `AUDIO_STREAM_CHANNELS`,
+  `AUDIO_STREAM_SAMPLES`, `AUDIO_SAMPLERATE`, and
+  `TX_STREAM_AUDIO_BUFFERING`.
+- TX audio uses a pull handshake: the server sends binary
+  `TX_CHRONO` requests, and the client responds with binary
+  `TX_AUDIO_STREAM` (`StreamType=2`) with the requested number of PCM
+  samples. The 64-byte little-endian header and supported sample formats
+  are serialized explicitly. Samples are generated in the WebSocket task
+  from a bounded 63-symbol SPSC queue; the network task never holds a lock
+  needed by the FSK ISR or TxManager. A queue underrun emits the same LTRS
+  idle-diddle pattern as the direct FSK ISR and is reported on Serial.
+- On transmit, the client sends `TRX:<idx>,true,tci;` to select TCI audio
+  when the existing PTT sequencer asserts PTT; it sends
+  `TRX:<idx>,false;` when the sequencer releases PTT. Direct GPIO FSK,
+  GPIO PTT/PA timing, and the hardware inhibit remain controlled by the
+  existing TX path. If TCI is not connected at key-up, or disconnects
+  during transmission, direct GPIO FSK continues and an explanatory
+  message is written to Serial.
+- The supported audio choices in the researched TCI v2.0 spec are sample
+  rates 8/12/24/48kHz, sample types int16/int24/int32/float32, one or two
+  channels, and packet sizes 100-2048 samples. The packet size should
+  represent at least 10ms of audio to avoid damaging the transmitted
+  signal. TCI's client-side buffering timeout is 50-500ms (50ms default).
+
+### Implemented AFSK generation and configuration
+
+- `AfskModulator` consumes the same queued Baudot symbols as `FskTimer`,
+  including LSB-first 5-bit data, a start bit, and the 1.5-bit stop period.
+  Its continuous-phase oscillator uses the configured baud rate and keeps
+  phase across Mark/Space changes. It renders the same character stream;
+  it does not replace or disable `FSK_PIN`.
+- The Configuration page persists the TCI enable flag, server IPv4/port,
+  transceiver index, Mark/Space tones, sample rate, sample format, channel
+  count, samples per frame, and buffering timeout. Defaults are disabled,
+  `192.168.1.100:50001`, transceiver 0, Mark 2125 Hz, Space 2295 Hz,
+  48 kHz, int16, mono, 480 samples, and 50 ms. The tone pair is
+  independently editable; 2125/2295 Hz is the confirmed default.
+- Validation constrains the protocol ranges and requires each frame to
+  represent at least 10 ms of audio at the selected sample rate. TCI
+  configuration changes are persisted through the existing ConfigStore
+  path and applied only when no TX is active.
+
+This resolves part of the old "TX audio" digipot question: the TCI audio
+exists as digital PCM and leaves through Ethernet, so this path needs no
+on-board DAC, analog output stage, or TX digipot. A separate analog AFSK
+audio output for non-TCI radios is not part of this feature and has not
+been requested.
+
+### Verification still required before on-air use
+
+- The PlatformIO CLI was unavailable in the implementation environment,
+  so the ESP32 build against the pinned Arduino-ESP32 2.0.17 core and
+  WebSockets library has not yet been run.
+- TCI command spellings, binary interoperability, server-side TX source
+  selection, sample format/channel interpretation, and end-to-end audio
+  must be checked against the target ExpertSDR3/SunSDR version.
+- Bench-check GPIO FSK and TCI AFSK start/stop alignment, sample-clock
+  drift, audio buffering/latency, RF tone levels, and simultaneous output
+  behavior on the actual radio before using the feature on air.
+- Connection status is currently reported on Serial only; no browser
+  indicator or radio-rejection acknowledgement is implemented.

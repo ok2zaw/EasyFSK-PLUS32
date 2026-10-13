@@ -19,6 +19,8 @@
 #include "ConfigStore.h"
 #include "FskTimer.h"
 #include "CwTimer.h"
+#include "TciAfsk.h"
+#include "AdcMonitor.h"
 #include "TxManager.h"
 #include "SerialControl.h"
 #include "WinkeyEmulator.h"
@@ -81,11 +83,13 @@ void setup() {
 
   FskTimer::begin(cfg.baudRate, cfg.markHigh);
   CwTimer::begin();
+  TciAfsk::begin(cfg);
   ModeSelect::begin();
   ModeSelect::setActive(cfg.uart2Mode == Uart2Mode::Cw);
   TxManager::begin(cfg);
   SerialControl::begin();
   WinkeyEmulator::begin(cfg); // owns UART2 -- see the design doc's "UART1/UART2 split"
+  AdcMonitor::begin();
   WebInterface::begin();
 
   bool inhibited = (digitalRead(CPU_INH_PIN) == LOW);

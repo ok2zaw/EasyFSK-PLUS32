@@ -53,6 +53,11 @@
 // J1 pin: ADC4_PTT -- net name literally says PTT.
 #define PTT_USB_RTS_PIN 39
 
+// RX audio input for the continuous ADC monitor, level meter, and planned
+// RTTY/FFT processing. ADC1 channel 6; input-only is appropriate here.
+// J1 pin: ADC1.
+#define RX_AUDIO_ADC_PIN 34
+
 // Deliberately unused: J1 MISO / GPIO12 (MTDI, flash-voltage-select strap)
 // -- the one genuinely risky pin on this board. Do not assign it.
 // #define UNUSED_RESERVED_PIN 12

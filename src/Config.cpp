@@ -62,6 +62,10 @@ static bool isValidCwSpeedWpm(long v) {
   return v >= CfgLimits::CW_SPEED_MIN_WPM && v <= CfgLimits::CW_SPEED_MAX_WPM;
 }
 
+static bool isValidTciSampleRate(long v) {
+  return v == 8000 || v == 12000 || v == 24000 || v == 48000;
+}
+
 static bool isValidHostname(const char *s, size_t len) {
   if (len == 0 || len > CfgLimits::HOSTNAME_MAX_LEN) return false;
   if (!((s[0] >= 'a' && s[0] <= 'z') || (s[0] >= 'A' && s[0] <= 'Z') ||
@@ -106,6 +110,19 @@ void configToJson(const Config &cfg, JsonObject out) {
   net["gateway"] = static_cast<const char *>(cfg.network.gateway);
   net["subnet"] = static_cast<const char *>(cfg.network.subnet);
   net["dns"] = static_cast<const char *>(cfg.network.dns);
+
+  JsonObject tci = out["tci"].to<JsonObject>();
+  tci["enabled"] = cfg.tci.enabled;
+  tci["serverIp"] = static_cast<const char *>(cfg.tci.serverIp);
+  tci["port"] = cfg.tci.port;
+  tci["receiver"] = cfg.tci.receiver;
+  tci["markHz"] = cfg.tci.markHz;
+  tci["spaceHz"] = cfg.tci.spaceHz;
+  tci["sampleRate"] = cfg.tci.sampleRate;
+  tci["sampleFormat"] = cfg.tci.sampleFormat;
+  tci["channels"] = cfg.tci.channels;
+  tci["samples"] = cfg.tci.samples;
+  tci["bufferTimeoutMs"] = cfg.tci.bufferTimeoutMs;
 }
 
 static bool configMerge(JsonVariantConst in, Config &out, JsonObject errors,
@@ -300,6 +317,150 @@ static bool configMerge(JsonVariantConst in, Config &out, JsonObject errors,
           errors[key] = "must be a valid IPv4 address";
           ok = false;
         }
+      }
+    }
+  }
+
+  JsonVariantConst tci = in["tci"];
+  if (!tci.isNull()) {
+    if (!tci.is<JsonObjectConst>()) {
+      errors["tci"] = "must be an object";
+      ok = false;
+    } else {
+      JsonVariantConst enabled = tci["enabled"];
+      if (!enabled.isNull()) {
+        if (enabled.is<bool>()) {
+          result.tci.enabled = enabled.as<bool>();
+        } else {
+          errors["tci.enabled"] = "must be a boolean";
+          ok = false;
+        }
+      }
+
+      JsonVariantConst serverIp = tci["serverIp"];
+      if (!serverIp.isNull()) {
+        if (!serverIp.is<const char *>()) {
+          errors["tci.serverIp"] = "must be a valid IPv4 address";
+          ok = false;
+        } else {
+          const char *value = serverIp.as<const char *>();
+          if (!isValidIPv4(value)) {
+            errors["tci.serverIp"] = "must be a valid IPv4 address";
+            ok = false;
+          } else {
+            strncpy(result.tci.serverIp, value, sizeof(result.tci.serverIp) - 1);
+            result.tci.serverIp[sizeof(result.tci.serverIp) - 1] = '\0';
+          }
+        }
+      }
+
+      const struct {
+        const char *jsonKey;
+        uint16_t TciConfig::*member;
+        long minimum;
+        long maximum;
+      } tciUint16Fields[] = {
+          {"port", &TciConfig::port, CfgLimits::TCI_PORT_MIN, CfgLimits::TCI_PORT_MAX},
+          {"markHz", &TciConfig::markHz, CfgLimits::TCI_TONE_MIN_HZ, CfgLimits::TCI_TONE_MAX_HZ},
+          {"spaceHz", &TciConfig::spaceHz, CfgLimits::TCI_TONE_MIN_HZ, CfgLimits::TCI_TONE_MAX_HZ},
+          {"samples", &TciConfig::samples, CfgLimits::TCI_SAMPLES_MIN, CfgLimits::TCI_SAMPLES_MAX},
+          {"bufferTimeoutMs", &TciConfig::bufferTimeoutMs,
+           CfgLimits::TCI_BUFFER_TIMEOUT_MIN_MS, CfgLimits::TCI_BUFFER_TIMEOUT_MAX_MS},
+      };
+      for (const auto &field : tciUint16Fields) {
+        JsonVariantConst value = tci[field.jsonKey];
+        if (value.isNull()) continue;
+        if (!value.is<long>()) {
+          char key[32];
+          snprintf(key, sizeof(key), "tci.%s", field.jsonKey);
+          errors[key] = "must be an integer in the supported range";
+          ok = false;
+          continue;
+        }
+        long number = value.as<long>();
+        if (number < field.minimum || number > field.maximum) {
+          char key[32];
+          snprintf(key, sizeof(key), "tci.%s", field.jsonKey);
+          errors[key] = "must be in the supported range";
+          ok = false;
+          continue;
+        }
+        result.tci.*(field.member) = static_cast<uint16_t>(number);
+      }
+
+      JsonVariantConst receiver = tci["receiver"];
+      if (!receiver.isNull()) {
+        if (!receiver.is<long>()) {
+          errors["tci.receiver"] = "must be an integer from 0-15";
+          ok = false;
+        } else {
+          long value = receiver.as<long>();
+          if (value < 0 || value > 15) {
+            errors["tci.receiver"] = "must be 0-15";
+            ok = false;
+          } else {
+            result.tci.receiver = static_cast<uint8_t>(value);
+          }
+        }
+      }
+
+      JsonVariantConst sampleRate = tci["sampleRate"];
+      if (!sampleRate.isNull()) {
+        if (!sampleRate.is<long>()) {
+          errors["tci.sampleRate"] = "must be one of 8000, 12000, 24000, 48000";
+          ok = false;
+        } else {
+          long value = sampleRate.as<long>();
+          if (isValidTciSampleRate(value)) {
+            result.tci.sampleRate = static_cast<uint32_t>(value);
+          } else {
+            errors["tci.sampleRate"] = "must be one of 8000, 12000, 24000, 48000";
+            ok = false;
+          }
+        }
+      }
+
+      JsonVariantConst sampleFormat = tci["sampleFormat"];
+      if (!sampleFormat.isNull()) {
+        if (!sampleFormat.is<long>()) {
+          errors["tci.sampleFormat"] = "must be an integer from 0-3";
+          ok = false;
+        } else {
+          long value = sampleFormat.as<long>();
+          if (value < 0 || value > 3) {
+            errors["tci.sampleFormat"] = "must be 0-3";
+            ok = false;
+          } else {
+            result.tci.sampleFormat = static_cast<uint8_t>(value);
+          }
+        }
+      }
+
+      JsonVariantConst channels = tci["channels"];
+      if (!channels.isNull()) {
+        if (!channels.is<long>()) {
+          errors["tci.channels"] = "must be 1 or 2";
+          ok = false;
+        } else {
+          long value = channels.as<long>();
+          if (value < 1 || value > 2) {
+            errors["tci.channels"] = "must be 1 or 2";
+            ok = false;
+          } else {
+            result.tci.channels = static_cast<uint8_t>(value);
+          }
+        }
+      }
+
+      long samplesPerFrame = result.tci.samples;
+      long minimumSamples = (result.tci.sampleRate + 99) / 100;
+      if (samplesPerFrame < minimumSamples) {
+        errors["tci.samples"] = "must provide at least 10 ms of audio at the selected sample rate";
+        ok = false;
+      }
+      if (result.tci.markHz == result.tci.spaceHz) {
+        errors["tci.spaceHz"] = "must differ from the Mark tone";
+        ok = false;
       }
     }
   }

@@ -2,6 +2,7 @@
 #include "Baudot.h"
 #include "FskTimer.h"
 #include "CwTimer.h"
+#include "TciAfsk.h"
 #include "StatusDisplay.h"
 #include "Pins.h"
 #include "TxHandoff.h"
@@ -56,6 +57,7 @@ State s_state = State::Idle;
 uint32_t s_stateEnteredMs = 0;
 bool s_rtsSession = false;
 bool s_tuneActive = false; // Winkey 0x0B "Key Immediate" -- continuous carrier for antenna tuning
+bool s_tciSession = false;
 bool s_pttOutputActive = false;
 bool s_paOutputActive = false;
 Source s_activeSource = Source::SerialLink;
@@ -149,6 +151,8 @@ void setInhibitedStatus(bool inhibited) {
 // simpler and safer than branching on s_activeSource in a code path whose
 // whole point is "stop everything right now".
 void forceStopImmediate() {
+  if (s_tciSession) TciAfsk::setTxActive(false);
+  s_tciSession = false;
   setPaOutput(false);
   setPttOutput(false);
   digitalWrite(LED_RX_PIN, HIGH);
@@ -170,6 +174,18 @@ void forceStopImmediate() {
   s_tuneActive = false;
   clearDeferredKeyUp();
   updateStatus();
+}
+
+void pumpFskSymbols() {
+  while (FskTimer::ringHasFreeSlot()) {
+    Baudot::QueuedSymbol sym = s_sendBuffer.nextSymbol();
+    if (!FskTimer::pushSymbol(sym)) break;
+    if (s_tciSession && !TciAfsk::pushSymbol(sym)) {
+      Serial.println(F("TCI AFSK: symbol queue full; stopping TCI TX"));
+      TciAfsk::setTxActive(false);
+      s_tciSession = false;
+    }
+  }
 }
 
 // Begins the graceful nested shutdown sequence. After pttTailMs the main
@@ -256,6 +272,7 @@ void handleMessage(const TxMsg &msg, bool inhibitedNow) {
             CwTimer::setActive(false);
           } else if (!s_rtsSession) {
             FskTimer::setActive(false, false);
+            TciAfsk::flushModulation();
           }
         }
         // If already in a tail state, do not restart either delay. Abort only
@@ -514,6 +531,12 @@ void taskFn(void *) {
               FskTimer::holdMark();
             }
             setPttOutput(true);
+            if (!s_rtsSession && !isCwSource(s_activeSource)) {
+              s_tciSession = TciAfsk::setTxActive(true);
+              if (!s_tciSession && TciAfsk::isEnabled()) {
+                Serial.println(F("TCI AFSK: radio unavailable; continuing direct FSK TX"));
+              }
+            }
             digitalWrite(LED_RX_PIN, LOW);
             StatusDisplay::refreshLine1(s_cfg.callsign, sourceLabel(s_activeSource), s_cfg.markHigh);
             s_state = transition.nextState;
@@ -534,6 +557,10 @@ void taskFn(void *) {
               CwTimer::setActive(true);
             } else {
               FskTimer::resetForNewTx();
+              if (s_tciSession) {
+                TciAfsk::startModulation();
+                pumpFskSymbols();
+              }
               FskTimer::setActive(true, false);
             }
             StatusDisplay::resetTxLine();
@@ -552,10 +579,7 @@ void taskFn(void *) {
           // Feed the ISR's lookahead ring buffer -- this is the "compute
           // next character's bit pattern one full character-period ahead"
           // decision from the design doc.
-          while (FskTimer::ringHasFreeSlot()) {
-            Baudot::QueuedSymbol sym = s_sendBuffer.nextSymbol();
-            if (!FskTimer::pushSymbol(sym)) break;
-          }
+          pumpFskSymbols();
           uint8_t startedAscii;
           while (FskTimer::takeCharStarted(startedAscii)) {
             if (s_cfg.liveLcdText) StatusDisplay::appendTxChar(startedAscii);
@@ -587,6 +611,10 @@ void taskFn(void *) {
           const TxSequencer::Transition transition =
               TxSequencer::poll(s_state, nowMs, s_stateEnteredMs, currentTimings());
           if (transition.event == TxSequencer::Event::ReleasePtt) {
+            if (s_tciSession) {
+              TciAfsk::setTxActive(false);
+              s_tciSession = false;
+            }
             setPttOutput(false);
             digitalWrite(LED_RX_PIN, HIGH);
             if (s_rtsSession) {

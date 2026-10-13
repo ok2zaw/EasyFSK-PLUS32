@@ -46,6 +46,33 @@ void test_config_save_sends_uart2_and_cw_values() {
   assertContains("cwSpeedWpm: parseInt(document.getElementById('cwSpeedWpm').value, 10)");
 }
 
+void test_tci_audio_controls_match_backend_ranges() {
+  assertContains("id=\"tciEnabled\"");
+  assertContains("id=\"tciMarkHz\" min=\"300\" max=\"3000\"");
+  assertContains("id=\"tciSpaceHz\" min=\"300\" max=\"3000\"");
+  assertContains("<option value=\"48000\">48 kHz</option>");
+  assertContains("id=\"tciSamples\" min=\"100\" max=\"2048\"");
+  assertContains("Defaults to 2125/2295 Hz");
+}
+
+void test_tci_config_is_loaded_and_saved() {
+  assertContains("var tci = cfg.tci || {}");
+  assertContains("getElementById('tciMarkHz').value = tci.markHz || 2125");
+  assertContains("getElementById('tciSpaceHz').value = tci.spaceHz || 2295");
+  assertContains("enabled: document.getElementById('tciEnabled').checked");
+  assertContains("sampleRate: parseInt(document.getElementById('tciSampleRate').value, 10)");
+}
+
+void test_adc_level_meter_and_overload_state_are_connected_to_websocket() {
+  assertContains("id=\"adcMeter\"");
+  assertContains("id=\"adcLevelMeter\" role=\"meter\"");
+  assertContains("5% · RX noise reference");
+  assertContains("id=\"adcOverloadWarning\"");
+  assertContains("function applyAdc(data)");
+  assertContains("else if (data.type === 'adc') applyAdc(data)");
+  assertContains("data.clipped === true");
+}
+
 void test_network_restart_requirement_is_visible_and_reported() {
   assertContains("pattern=\"[A-Za-z0-9](?:[A-Za-z0-9-]{0,29}[A-Za-z0-9])?\"");
   assertContains("Network changes take effect after restart.");
@@ -62,6 +89,9 @@ int main(int, char **) {
   RUN_TEST(test_uart2_and_cw_controls_exist_with_backend_ranges);
   RUN_TEST(test_config_load_populates_uart2_and_cw_controls);
   RUN_TEST(test_config_save_sends_uart2_and_cw_values);
+  RUN_TEST(test_tci_audio_controls_match_backend_ranges);
+  RUN_TEST(test_tci_config_is_loaded_and_saved);
+  RUN_TEST(test_adc_level_meter_and_overload_state_are_connected_to_websocket);
   RUN_TEST(test_network_restart_requirement_is_visible_and_reported);
   RUN_TEST(test_storage_error_response_is_shown_to_user);
   return UNITY_END();

@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "ConfigStore.h"
+#include "AdcMonitor.h"
 #include "FskTimer.h"
 #include "TxManager.h"
 #include "WebConfigApi.h"
@@ -56,6 +57,7 @@ struct DependencyMock {
   bool endResult = true;
   bool abortResult = true;
   uint32_t underruns = 0;
+  AdcMonitor::Snapshot adc;
   int configApiStatus = 200;
   bool configApiOk = true;
   size_t configApiCalls = 0;
@@ -153,6 +155,12 @@ namespace FskTimer {
 uint32_t underrunCount() { return mock.underruns; }
 
 } // namespace FskTimer
+
+namespace AdcMonitor {
+
+Snapshot getSnapshot() { return mock.adc; }
+
+} // namespace AdcMonitor
 
 void setUp() {
   mock.reset();
@@ -319,21 +327,43 @@ void test_heartbeat_tracks_link_loss_and_recovery() {
 
   ETH.linked = false;
   runOnePushTaskIteration(1000);
-  TEST_ASSERT_EQUAL_UINT32(2, WebServerMock::socket->sentBodies.size());
+  TEST_ASSERT_EQUAL_UINT32(3, WebServerMock::socket->sentBodies.size());
+  JsonDocument adcUpdate;
+  deserializeJson(adcUpdate, WebServerMock::socket->sentBodies[1]);
+  TEST_ASSERT_EQUAL_STRING("adc", adcUpdate["type"].as<const char *>());
+  TEST_ASSERT_FALSE(adcUpdate["available"].as<bool>());
   JsonDocument lostHeartbeat;
-  deserializeJson(lostHeartbeat, WebServerMock::socket->sentBodies[1]);
+  deserializeJson(lostHeartbeat, WebServerMock::socket->sentBodies[2]);
   TEST_ASSERT_EQUAL_STRING("heartbeat", lostHeartbeat["type"].as<const char *>());
   TEST_ASSERT_FALSE(lostHeartbeat["linkUp"].as<bool>());
 
   WebServerMock::socket->sentBodies.clear();
   ETH.linked = true;
   runOnePushTaskIteration(2000);
-  TEST_ASSERT_EQUAL_UINT32(2, WebServerMock::socket->sentBodies.size());
+  TEST_ASSERT_EQUAL_UINT32(3, WebServerMock::socket->sentBodies.size());
   JsonDocument recoveredHeartbeat;
-  deserializeJson(recoveredHeartbeat, WebServerMock::socket->sentBodies[1]);
+  deserializeJson(recoveredHeartbeat, WebServerMock::socket->sentBodies[2]);
   TEST_ASSERT_TRUE(recoveredHeartbeat["linkUp"].as<bool>());
   TEST_ASSERT_EQUAL_UINT32(2, WebServerMock::socket->cleanupCount);
   TEST_ASSERT_EQUAL_UINT32(2, TaskMock::delayCount);
+}
+
+void test_adc_level_and_overload_are_pushed_to_websocket() {
+  mock.adc.valid = true;
+  mock.adc.levelPct = 42;
+  mock.adc.clipped = true;
+  mock.adc.updatedAtMs = 20;
+  WebServerMock::socket->sentBodies.clear();
+
+  runOnePushTaskIteration(100);
+  TEST_ASSERT_EQUAL_UINT32(2, WebServerMock::socket->sentBodies.size());
+  JsonDocument update;
+  deserializeJson(update, WebServerMock::socket->sentBodies[1]);
+  TEST_ASSERT_EQUAL_STRING("adc", update["type"].as<const char *>());
+  TEST_ASSERT_TRUE(update["available"].as<bool>());
+  TEST_ASSERT_EQUAL_UINT8(42, update["levelPct"].as<uint8_t>());
+  TEST_ASSERT_TRUE(update["clipped"].as<bool>());
+  TEST_ASSERT_EQUAL_UINT32(20, update["updatedAtMs"].as<uint32_t>());
 }
 
 void test_idle_send_queues_complete_web_session() {
@@ -455,6 +485,7 @@ int main(int, char **) {
   RUN_TEST(test_system_route_reports_firmware_network_and_diagnostics);
   RUN_TEST(test_system_route_tracks_link_loss_and_recovery);
   RUN_TEST(test_heartbeat_tracks_link_loss_and_recovery);
+  RUN_TEST(test_adc_level_and_overload_are_pushed_to_websocket);
   RUN_TEST(test_idle_send_queues_complete_web_session);
   RUN_TEST(test_send_appends_only_bytes_to_active_rtty_session);
   RUN_TEST(test_send_preflight_rejections_do_not_touch_queue);

@@ -20,6 +20,15 @@ constexpr uint8_t HOSTNAME_MAX_LEN = 31;
 constexpr uint8_t IP_STR_MAX_LEN = 15; // "255.255.255.255"
 constexpr uint8_t CW_SPEED_MIN_WPM = 5;  // matches Winkey's own speed range
 constexpr uint8_t CW_SPEED_MAX_WPM = 99;
+constexpr uint8_t TCI_HOST_MAX_LEN = 15;
+constexpr uint16_t TCI_PORT_MIN = 1;
+constexpr uint16_t TCI_PORT_MAX = 65535;
+constexpr uint16_t TCI_TONE_MIN_HZ = 300;
+constexpr uint16_t TCI_TONE_MAX_HZ = 3000;
+constexpr uint16_t TCI_SAMPLES_MIN = 100;
+constexpr uint16_t TCI_SAMPLES_MAX = 2048;
+constexpr uint16_t TCI_BUFFER_TIMEOUT_MIN_MS = 50;
+constexpr uint16_t TCI_BUFFER_TIMEOUT_MAX_MS = 500;
 } // namespace CfgLimits
 
 // UART2's mode -- see the design doc's "UART1/UART2 split" (2026-09-27).
@@ -39,6 +48,20 @@ struct NetworkConfig {
   char dns[CfgLimits::IP_STR_MAX_LEN + 1] = "192.168.1.1";
 };
 
+struct TciConfig {
+  bool enabled = false;
+  char serverIp[CfgLimits::TCI_HOST_MAX_LEN + 1] = "192.168.1.100";
+  uint16_t port = 50001;
+  uint8_t receiver = 0;
+  uint16_t markHz = 2125;
+  uint16_t spaceHz = 2295;
+  uint32_t sampleRate = 48000;
+  uint8_t sampleFormat = 0; // TCI INT16
+  uint8_t channels = 1;
+  uint16_t samples = 480;
+  uint16_t bufferTimeoutMs = 50;
+};
+
 struct Config {
   // --- Fields with a direct AVR EEPROM equivalent ---
   char callsign[CfgLimits::CALLSIGN_MAX_LEN + 1] = ""; // display/reporting only, not used by the TX engine
@@ -52,6 +75,7 @@ struct Config {
 
   // --- New for the ESP32 port ---
   NetworkConfig network;
+  TciConfig tci;
 
   // --- New for CW keying / Winkey emulation (added 2026-09-27) ---
   // Settable from the Configuration page (a toggle) and from the encoder

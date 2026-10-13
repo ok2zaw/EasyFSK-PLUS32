@@ -2,6 +2,7 @@
 #include "TxManager.h"
 #include "ConfigStore.h"
 #include "FskTimer.h"
+#include "AdcMonitor.h"
 #include "Version.h"
 #include "WebConfigApi.h"
 #include "WebTxPolicy.h"
@@ -165,6 +166,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
 void pushTask(void *) {
   uint32_t lastRevision = 0xFFFFFFFF; // force an initial push
   uint32_t lastHeartbeatMs = 0;
+  uint32_t lastAdcPushMs = 0;
 
   for (;;) {
     TxManager::Status st = TxManager::getStatus();
@@ -179,6 +181,23 @@ void pushTask(void *) {
     }
 
     uint32_t now = millis();
+    if (now - lastAdcPushMs >= 100) {
+      lastAdcPushMs = now;
+      AdcMonitor::Snapshot adc = AdcMonitor::getSnapshot();
+      bool adcFresh = adc.valid && now - adc.updatedAtMs <= 500;
+      JsonDocument doc;
+      doc["type"] = "adc";
+      doc["available"] = adcFresh;
+      if (adcFresh) {
+        doc["levelPct"] = adc.levelPct;
+        doc["clipped"] = adc.clipped;
+        doc["updatedAtMs"] = adc.updatedAtMs;
+      }
+      String body;
+      serializeJson(doc, body);
+      ws.textAll(body);
+    }
+
     if (now - lastHeartbeatMs >= 1000) {
       lastHeartbeatMs = now;
       JsonDocument doc;
