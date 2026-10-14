@@ -44,6 +44,7 @@ void buildStatusJson(JsonObject obj) {
   obj["pttSource"] = sourceToString(st.pttSource);
   obj["inhibited"] = st.inhibited;
   obj["callsign"] = cfg.callsign;
+  obj["rxMonitorMode"] = (cfg.rxMonitorMode == RxMonitorMode::Cw) ? "cw" : "rtty";
   char ch[2] = {st.lastChar, '\0'};
   obj["char"] = st.lastChar != 0 ? String(ch) : String("");
   obj["bufferPending"] = st.bufferPending;
@@ -105,6 +106,50 @@ void handleTxSend(AsyncWebServerRequest *request, JsonVariant &json) {
   TxManager::Status st = TxManager::getStatus();
   const char *text = json["text"] | "";
   size_t textLen = strlen(text);
+  JsonVariantConst txMode = json["mode"];
+  bool cwMode = txMode.is<const char *>() &&
+                strcmp(txMode.as<const char *>(), "cw") == 0;
+  if (!txMode.isNull() && !cwMode) {
+    request->send(400, "application/json", "{\"ok\":false,\"reason\":\"invalid_mode\"}");
+    return;
+  }
+
+  if (cwMode) {
+    if (ConfigStore::get().uart2Mode != Uart2Mode::Cw) {
+      request->send(409, "application/json",
+                    "{\"ok\":false,\"reason\":\"cw_tx_mode_not_enabled\"}");
+      return;
+    }
+    if (st.inhibited) {
+      request->send(200, "application/json", "{\"ok\":false,\"reason\":\"inhibited\"}");
+      return;
+    }
+    if (textLen > WebTxPolicy::MAX_TEXT_LENGTH) {
+      request->send(400, "application/json", "{\"ok\":false,\"reason\":\"text_too_long\",\"maxLength\":120}");
+      return;
+    }
+    if (textLen == 0) {
+      request->send(400, "application/json", "{\"ok\":false,\"reason\":\"text_empty\"}");
+      return;
+    }
+    if (textLen > TxManager::commandQueueFreeSlots()) {
+      request->send(503, "application/json", "{\"ok\":false,\"reason\":\"tx_queue_full\"}");
+      return;
+    }
+
+    bool queued = true;
+    for (const char *p = text; *p != '\0'; p++) {
+      queued = queued && TxManager::cwEnqueueChar(static_cast<uint8_t>(*p));
+    }
+    if (!queued) {
+      TxManager::enqueueAbort();
+      request->send(503, "application/json", "{\"ok\":false,\"reason\":\"tx_queue_full_aborted\"}");
+      return;
+    }
+    request->send(200, "application/json", "{\"ok\":true}");
+    return;
+  }
+
   bool appendToActive = WebTxPolicy::canAppendToActive(
       st.txActive, st.ending, st.pttSource == TxManager::Source::Winkey);
   WebTxPolicy::Plan plan = WebTxPolicy::planSend(
@@ -205,6 +250,8 @@ void pushTask(void *) {
       doc["uptimeMs"] = now;
       doc["heapFree"] = ESP.getFreeHeap();
       doc["linkUp"] = ETH.linkUp();
+      Config cfg = ConfigStore::get();
+      doc["rxMonitorMode"] = (cfg.rxMonitorMode == RxMonitorMode::Cw) ? "cw" : "rtty";
       String body;
       serializeJson(doc, body);
       ws.textAll(body);

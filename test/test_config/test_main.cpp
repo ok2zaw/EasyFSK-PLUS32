@@ -20,6 +20,8 @@ void test_missing_file_returns_defaults() {
   TEST_ASSERT_EQUAL_STRING("", cfg.callsign);
   TEST_ASSERT_FLOAT_WITHIN(0.001f, 45.45f, cfg.baudRate);
   TEST_ASSERT_EQUAL_UINT8(20, cfg.cwSpeedWpm);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(RxMonitorMode::Rtty),
+                          static_cast<uint8_t>(cfg.rxMonitorMode));
   TEST_ASSERT_FALSE(cfg.tci.enabled);
   TEST_ASSERT_EQUAL_UINT16(2125, cfg.tci.markHz);
   TEST_ASSERT_EQUAL_UINT16(2295, cfg.tci.spaceHz);
@@ -90,6 +92,7 @@ void test_validation_accepts_all_documented_boundaries() {
   input["paLeadMs"] = 0;
   input["paTailMs"] = 9999;
   input["uart2Mode"] = "cw";
+  input["rxMonitorMode"] = "cw";
   input["cwSpeedWpm"] = 99;
   JsonObject network = input["network"].to<JsonObject>();
   network["hostname"] = "easy-fsk-32";
@@ -109,6 +112,8 @@ void test_validation_accepts_all_documented_boundaries() {
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Uart2Mode::Cw),
                           static_cast<uint8_t>(cfg.uart2Mode));
   TEST_ASSERT_EQUAL_UINT8(99, cfg.cwSpeedWpm);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(RxMonitorMode::Cw),
+                          static_cast<uint8_t>(cfg.rxMonitorMode));
   TEST_ASSERT_EQUAL_STRING("10.0.0.1", cfg.network.staticIp);
 }
 
@@ -142,6 +147,7 @@ void test_validation_rejects_present_fields_with_wrong_types() {
   input["pttLeadMs"] = 1.5;
   input["liveLcdText"] = "true";
   input["uart2Mode"] = 1;
+  input["rxMonitorMode"] = "sideband";
   input["cwSpeedWpm"] = 20.5;
   input["network"] = "not-an-object";
   input["tci"] = "not-an-object";
@@ -156,6 +162,7 @@ void test_validation_rejects_present_fields_with_wrong_types() {
   TEST_ASSERT_TRUE(errors["pttLeadMs"].is<const char *>());
   TEST_ASSERT_TRUE(errors["liveLcdText"].is<const char *>());
   TEST_ASSERT_TRUE(errors["uart2Mode"].is<const char *>());
+  TEST_ASSERT_TRUE(errors["rxMonitorMode"].is<const char *>());
   TEST_ASSERT_TRUE(errors["cwSpeedWpm"].is<const char *>());
   TEST_ASSERT_TRUE(errors["network"].is<const char *>());
   TEST_ASSERT_TRUE(errors["tci"].is<const char *>());
@@ -189,6 +196,7 @@ void test_save_writes_complete_round_trippable_json() {
   original.baudRate = 50.0f;
   original.markHigh = false;
   original.uart2Mode = Uart2Mode::Cw;
+  original.rxMonitorMode = RxMonitorMode::Cw;
   original.cwSpeedWpm = 27;
   original.tci.enabled = true;
   strcpy(original.tci.serverIp, "10.0.0.25");
@@ -212,6 +220,8 @@ void test_save_writes_complete_round_trippable_json() {
   TEST_ASSERT_EQUAL(original.markHigh, loaded.markHigh);
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(original.uart2Mode),
                           static_cast<uint8_t>(loaded.uart2Mode));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(original.rxMonitorMode),
+                          static_cast<uint8_t>(loaded.rxMonitorMode));
   TEST_ASSERT_EQUAL_UINT8(original.cwSpeedWpm, loaded.cwSpeedWpm);
   TEST_ASSERT_TRUE(loaded.tci.enabled);
   TEST_ASSERT_EQUAL_STRING(original.tci.serverIp, loaded.tci.serverIp);

@@ -66,6 +66,8 @@
     border-bottom: 3px solid transparent; white-space: nowrap;
   }
   nav button.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+  nav button.mode-selected { color: var(--ok); }
+  .rx-mode-indicator { margin: auto .5rem; white-space: nowrap; color: var(--muted); }
   main { max-width: 1180px; margin: 0 auto; padding: 1.25rem; }
   .card {
     background: var(--card-bg); border: 1px solid var(--border); border-radius: .9em;
@@ -217,6 +219,15 @@
   }
   .decoder-char-weak { color: #eab308; }
   .decoder-char-bad { color: #f87171; }
+  .cw-placeholder {
+    min-height: 285px; display: grid; place-items: center; padding: 1.5rem;
+    color: #8f9db8; text-align: center; font-size: .9rem;
+  }
+  .cw-tune-leds { display: flex; align-items: center; gap: .5rem; margin-top: .8rem; }
+  .cw-tune-led {
+    flex: 1; height: .65rem; border-radius: 999px; background: #332e5c;
+  }
+  .cw-tune-led.center { background: var(--accent); box-shadow: 0 0 9px rgba(219,164,28,.6); }
   @media (max-width: 780px) {
     .monitor-grid { grid-template-columns: 1fr; }
     .monitor-canvas { height: 250px; }
@@ -241,9 +252,11 @@
 
 <nav>
   <button data-tab="status" class="active">Status</button>
-  <button data-tab="rtty">RTTY Monitor</button>
+  <button id="nav-rtty" data-tab="rtty">RTTY Monitor</button>
+  <button id="nav-cw" data-tab="cw">CW Monitor</button>
   <button data-tab="config">Configuration</button>
   <button data-tab="backup">Backup / Restore</button>
+  <span class="rx-mode-indicator" id="rxModeStatus" aria-live="polite">RX/TUNE: RTTY</span>
 </nav>
 
 <main>
@@ -387,6 +400,115 @@
     </div>
   </section>
 
+  <!-- CW MONITOR -->
+  <section id="tab-cw" class="tab">
+    <div class="card">
+      <div class="rtty-toolbar">
+        <div class="rtty-titleline">
+          <h2>CW monitor</h2>
+          <span class="preview-badge">Receive decoder unavailable</span>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label for="cwPitchHz">CW pitch (Hz)</label>
+          <input type="number" id="cwPitchHz" min="300" max="1200" step="10" value="600">
+          <div class="hint">Saved in this browser. Firmware decoding and pitch tracking are not implemented yet.</div>
+        </div>
+        <div class="field">
+          <label>Estimated speed</label>
+          <div class="livetext" style="margin-top:0;">— WPM · decoder not active</div>
+          <div class="hint">Automatic speed synchronization will be available with the CW decoder.</div>
+        </div>
+      </div>
+
+      <section class="card adc-meter stale" id="cwAdcMeter" aria-labelledby="cwAdcMeterTitle">
+        <div class="adc-meter-head">
+          <h3 id="cwAdcMeterTitle">RX ADC input level · GPIO34</h3>
+          <div class="adc-meter-readout">
+            <strong id="cwAdcLevelValue">—%</strong>
+            <span id="cwAdcLevelState">Waiting for ADC samples</span>
+          </div>
+        </div>
+        <div class="adc-track" id="cwAdcLevelMeter" role="meter" aria-label="CW ADC audio peak level"
+             aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div class="adc-fill" id="cwAdcLevelFill"></div>
+          <span class="adc-reference" aria-hidden="true"></span>
+        </div>
+        <div class="adc-scale">
+          <span>0%</span><span>5% · RX noise reference</span><span>100% · full scale</span>
+        </div>
+        <div class="adc-warning" id="cwAdcOverloadWarning" role="alert" aria-live="assertive" hidden>
+          ADC OVERLOAD — reduce receiver audio level
+        </div>
+      </section>
+
+      <div class="monitor-grid">
+        <article class="monitor-panel">
+          <div class="monitor-head">
+            <h3>Tuning reference</h3>
+            <span id="cwPitchReadout">600 Hz · center</span>
+          </div>
+          <div class="cw-placeholder">
+            <div>
+              <div>The center marker represents the selected CW pitch.</div>
+              <div class="cw-tune-leds" aria-label="Nine-position tuning reference">
+                <span class="cw-tune-led"></span><span class="cw-tune-led"></span>
+                <span class="cw-tune-led"></span><span class="cw-tune-led"></span>
+                <span class="cw-tune-led center"></span>
+                <span class="cw-tune-led"></span><span class="cw-tune-led"></span>
+                <span class="cw-tune-led"></span><span class="cw-tune-led"></span>
+              </div>
+              <div class="hint">Live tuning indication is not available until receive DSP is implemented.</div>
+            </div>
+          </div>
+        </article>
+        <article class="monitor-panel">
+          <div class="monitor-head">
+            <h3>CW spectrum</h3>
+            <span>Waiting for firmware DSP</span>
+          </div>
+          <div class="cw-placeholder">No live spectrum data is currently provided by the firmware.</div>
+        </article>
+      </div>
+    </div>
+
+    <div class="card decoder-panel">
+      <div class="decoder-head">
+        <div>
+          <h3>Decoded CW text</h3>
+          <div class="hint">The receive decoder is not yet implemented; no sample text is shown.</div>
+        </div>
+        <button class="iconbtn" id="cwDecoderClear" type="button">Clear</button>
+      </div>
+      <div class="decoder-column">
+        <pre class="decoder-text" id="cwDecoderText" aria-live="polite"></pre>
+      </div>
+    </div>
+
+    <div class="card tx-panel">
+      <h2>Manual CW transmit</h2>
+      <div class="field">
+        <label for="cwSendText">Text to send</label>
+        <input type="text" id="cwSendText" maxlength="120" placeholder="CQ CQ DE ...">
+        <div class="hint">
+          Sends through the ESP32's built-in CW engine at the configured CW speed.
+          Additional text is queued; the key automatically releases when the queue drains.
+          Maximum 120 characters per request. UART2 must be set to Winkey CW in Configuration.
+        </div>
+      </div>
+      <div class="actions">
+        <button class="primary" id="cwBtnSend" type="button">Send CW</button>
+        <button class="secondary danger" id="cwBtnAbort" type="button">Abort</button>
+      </div>
+      <div class="hint" style="margin-top:.9rem;">
+        Abort clears pending CW text and ends transmission through the normal PTT/PA safety sequence.
+      </div>
+      <div class="msg" id="cwSendMsg"></div>
+    </div>
+  </section>
+
   <!-- CONFIGURATION -->
   <section id="tab-config" class="tab">
     <form class="card" id="configForm">
@@ -459,6 +581,14 @@
           <label for="cwSpeedWpm">CW speed (WPM)</label>
           <input type="number" id="cwSpeedWpm" min="5" max="99" required>
           <div class="hint">Initial keying speed used by the Winkey/CW engine. Range 5-99 WPM.</div>
+        </div>
+        <div class="field">
+          <label for="rxMonitorMode">RX decoder / TUNE LED mode</label>
+          <select id="rxMonitorMode">
+            <option value="rtty">RTTY</option>
+            <option value="cw">CW</option>
+          </select>
+          <div class="hint">Independent of UART2 transmit mode. Selects the receive monitor and the future physical TUNE LED function.</div>
         </div>
       </div>
 
@@ -612,12 +742,74 @@
   });
 
   // ---- tabs ----
+  var currentRxMonitorMode = 'rtty';
+  var localRxModeOverride = null;
+
+  function activateTab(name) {
+    document.querySelectorAll('nav button').forEach(function (b) { b.classList.remove('active'); });
+    document.querySelectorAll('.tab').forEach(function (t) { t.classList.remove('active'); });
+    var button = document.querySelector('nav button[data-tab="' + name + '"]');
+    if (!button) return;
+    button.classList.add('active');
+    document.getElementById('tab-' + name).classList.add('active');
+  }
+
+  function applyMonitorMode(mode) {
+    if (mode !== 'rtty' && mode !== 'cw') return;
+    currentRxMonitorMode = mode;
+    document.getElementById('nav-rtty').classList.toggle('mode-selected', mode === 'rtty');
+    document.getElementById('nav-cw').classList.toggle('mode-selected', mode === 'cw');
+    document.getElementById('nav-rtty').setAttribute('aria-pressed', mode === 'rtty' ? 'true' : 'false');
+    document.getElementById('nav-cw').setAttribute('aria-pressed', mode === 'cw' ? 'true' : 'false');
+    document.getElementById('rxModeStatus').textContent = 'RX/TUNE: ' + mode.toUpperCase();
+    var modeInput = document.getElementById('rxMonitorMode');
+    if (modeInput) modeInput.value = mode;
+    var activeTab = document.querySelector('.tab.active');
+    if (activeTab && (activeTab.id === 'tab-rtty' || activeTab.id === 'tab-cw') &&
+        activeTab.id !== 'tab-' + mode) {
+      activateTab(mode);
+    }
+  }
+
+  function saveMonitorMode(mode, openMonitor) {
+    var status = document.getElementById('rxModeStatus');
+    localRxModeOverride = mode;
+    applyMonitorMode(mode);
+    if (openMonitor) activateTab(mode);
+    status.textContent = 'Saving RX/TUNE mode…';
+    return fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rxMonitorMode: mode })
+    }).then(function (r) { return r.json(); }).then(function (data) {
+      if (!data.ok) {
+        status.textContent = 'Selected ' + mode.toUpperCase() +
+          ' locally; settings not saved: ' + (data.message || 'save failed');
+        return false;
+      }
+      localRxModeOverride = null;
+      applyMonitorMode(mode);
+      if (openMonitor) activateTab(mode);
+      status.textContent = 'RX/TUNE: ' + mode.toUpperCase();
+      return true;
+    }).catch(function () {
+      status.textContent = 'Selected ' + mode.toUpperCase() +
+        ' locally; settings not saved: request failed';
+      return false;
+    });
+  }
+
   document.querySelectorAll('nav button').forEach(function (btn) {
     btn.addEventListener('click', function () {
-      document.querySelectorAll('nav button').forEach(function (b) { b.classList.remove('active'); });
-      document.querySelectorAll('.tab').forEach(function (t) { t.classList.remove('active'); });
-      btn.classList.add('active');
-      document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+      if (btn.dataset.tab === 'rtty' || btn.dataset.tab === 'cw') {
+        if (btn.dataset.tab === currentRxMonitorMode) {
+          activateTab(btn.dataset.tab);
+        } else {
+          saveMonitorMode(btn.dataset.tab, true);
+        }
+        return;
+      }
+      activateTab(btn.dataset.tab);
     });
   });
 
@@ -635,6 +827,9 @@
     staticFields.style.display = dhcpCheckbox.checked ? 'none' : 'flex';
   }
   dhcpCheckbox.addEventListener('change', updateStaticFieldsVisibility);
+  document.getElementById('rxMonitorMode').addEventListener('change', function () {
+    saveMonitorMode(this.value, true);
+  });
 
   function fillConfigForm(cfg) {
     document.getElementById('callsign').value = cfg.callsign || '';
@@ -646,6 +841,8 @@
     document.getElementById('paTailMs').value = cfg.paTailMs;
     document.getElementById('liveLcdText').checked = !!cfg.liveLcdText;
     document.getElementById('uart2Mode').value = cfg.uart2Mode || 'fsk2';
+    localRxModeOverride = null;
+    applyMonitorMode(cfg.rxMonitorMode || 'rtty');
     document.getElementById('cwSpeedWpm').value = cfg.cwSpeedWpm || 20;
     var tci = cfg.tci || {};
     document.getElementById('tciEnabled').checked = !!tci.enabled;
@@ -688,6 +885,7 @@
       paTailMs: parseInt(document.getElementById('paTailMs').value, 10),
       liveLcdText: document.getElementById('liveLcdText').checked,
       uart2Mode: document.getElementById('uart2Mode').value,
+      rxMonitorMode: document.getElementById('rxMonitorMode').value,
       cwSpeedWpm: parseInt(document.getElementById('cwSpeedWpm').value, 10),
       tci: {
         enabled: document.getElementById('tciEnabled').checked,
@@ -984,6 +1182,7 @@
   }
 
   function applyStatus(s) {
+    if (s.rxMonitorMode && localRxModeOverride === null) applyMonitorMode(s.rxMonitorMode);
     document.getElementById('stState').textContent = s.state === 'tx' ? 'TX' : (s.inhibited ? 'INHIBIT' : 'RX');
     document.getElementById('stSource').textContent = (s.pttSource || '—').toUpperCase();
     document.getElementById('stBuffer').textContent = s.bufferPending != null ? s.bufferPending : 0;
@@ -1010,6 +1209,13 @@
     document.getElementById('adcLevelMeter').setAttribute('aria-valuenow', '0');
     document.getElementById('adcLevelFill').style.width = '0%';
     document.getElementById('adcOverloadWarning').hidden = true;
+    document.getElementById('cwAdcMeter').classList.add('stale');
+    document.getElementById('cwAdcMeter').classList.remove('clipped', 'warning-level', 'high-level');
+    document.getElementById('cwAdcLevelValue').textContent = '—%';
+    document.getElementById('cwAdcLevelState').textContent = message;
+    document.getElementById('cwAdcLevelMeter').setAttribute('aria-valuenow', '0');
+    document.getElementById('cwAdcLevelFill').style.width = '0%';
+    document.getElementById('cwAdcOverloadWarning').hidden = true;
   }
 
   function applyAdc(data) {
@@ -1031,6 +1237,16 @@
     document.getElementById('adcLevelMeter').setAttribute('aria-valuenow', String(level));
     document.getElementById('adcLevelFill').style.width = level + '%';
     document.getElementById('adcOverloadWarning').hidden = !clipped;
+    var cwPanel = document.getElementById('cwAdcMeter');
+    cwPanel.classList.remove('stale');
+    cwPanel.classList.toggle('clipped', clipped);
+    cwPanel.classList.toggle('warning-level', !clipped && level >= 70 && level < 90);
+    cwPanel.classList.toggle('high-level', level >= 90);
+    document.getElementById('cwAdcLevelValue').textContent = level + '%';
+    document.getElementById('cwAdcLevelState').textContent = clipped ? 'Overload detected' : 'Live peak level';
+    document.getElementById('cwAdcLevelMeter').setAttribute('aria-valuenow', String(level));
+    document.getElementById('cwAdcLevelFill').style.width = level + '%';
+    document.getElementById('cwAdcOverloadWarning').hidden = !clipped;
     lastAdcUpdateAt = performance.now();
   }
 
@@ -1059,6 +1275,7 @@
       else if (data.type === 'heartbeat') {
         document.getElementById('sysHeap').textContent = Math.round(data.heapFree / 1024) + ' KB';
         document.getElementById('sysLink').textContent = data.linkUp ? 'up' : 'down';
+        if (data.rxMonitorMode && localRxModeOverride === null) applyMonitorMode(data.rxMonitorMode);
       }
     };
     ws.onclose = function () {
@@ -1069,6 +1286,50 @@
     ws.onerror = function () { ws.close(); };
   }
   connectWs();
+
+  // ---- CW monitor controls ----
+  var cwPitchInput = document.getElementById('cwPitchHz');
+  var savedCwPitch = Number(localStorage.getItem('easyfsk-cw-pitch-hz'));
+  if (Number.isFinite(savedCwPitch) && savedCwPitch >= 300 && savedCwPitch <= 1200) {
+    cwPitchInput.value = String(savedCwPitch);
+  }
+  function updateCwPitchReadout() {
+    var pitch = Number(cwPitchInput.value);
+    if (Number.isFinite(pitch) && pitch >= 300 && pitch <= 1200) {
+      document.getElementById('cwPitchReadout').textContent = pitch + ' Hz · center';
+      localStorage.setItem('easyfsk-cw-pitch-hz', String(pitch));
+    }
+  }
+  cwPitchInput.addEventListener('change', updateCwPitchReadout);
+  updateCwPitchReadout();
+
+  document.getElementById('cwDecoderClear').addEventListener('click', function () {
+    document.getElementById('cwDecoderText').textContent = '';
+  });
+  document.getElementById('cwBtnSend').addEventListener('click', function () {
+    var textInput = document.getElementById('cwSendText');
+    var msgEl = document.getElementById('cwSendMsg');
+    fetch('/api/tx/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: textInput.value, mode: 'cw' })
+    }).then(function (r) { return r.json(); }).then(function (data) {
+      if (data.ok) {
+        showMsg(msgEl, 'Queued for CW transmission.', true);
+        textInput.value = '';
+      } else {
+        showMsg(msgEl, 'Not sent: ' + (data.reason || 'unknown reason'), false);
+      }
+    }).catch(function () { showMsg(msgEl, 'Request failed.', false); });
+  });
+  document.getElementById('cwBtnAbort').addEventListener('click', function () {
+    var msgEl = document.getElementById('cwSendMsg');
+    fetch('/api/tx/abort', { method: 'POST' })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        showMsg(msgEl, data.ok ? 'CW transmission aborted.' : 'Abort failed: ' + (data.reason || 'unknown reason'), data.ok);
+      }).catch(function () { showMsg(msgEl, 'Request failed.', false); });
+  });
 })();
 </script>
 </body>

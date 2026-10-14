@@ -36,6 +36,10 @@ constexpr uint16_t TCI_BUFFER_TIMEOUT_MAX_MS = 500;
 // and has no mode field at all; this only ever affects UART2.
 enum class Uart2Mode : uint8_t { Fsk2, Cw };
 
+// Selects which receive monitor/demodulator and future TUNE-LED tuning
+// display are active. This is independent of the UART2 transmit/input mode.
+enum class RxMonitorMode : uint8_t { Rtty, Cw };
+
 struct NetworkConfig {
   char hostname[CfgLimits::HOSTNAME_MAX_LEN + 1] = "easyfsk";
   bool dhcp = true;
@@ -84,6 +88,7 @@ struct Config {
   // this from changing mid-transmission (see the design doc's "no free
   // GPIO"/pin-swap and CW/Winkey sections).
   Uart2Mode uart2Mode = Uart2Mode::Fsk2;
+  RxMonitorMode rxMonitorMode = RxMonitorMode::Rtty;
   // Power-on/default CW speed: loaded into the CW engine at boot and
   // whenever this stored value itself changes. The Winkey host's speed
   // command (0x02) changes only the RUNNING speed and is never written back

@@ -992,6 +992,20 @@ the tuning indicator/waterfall and shares almost its entire front end.
   implementation should use a short rolling measurement window so the
   displayed level is stable while clipping remains promptly detectable.
 
+### Manual receive monitor / TUNE selection (2026-10-14)
+
+- `rxMonitorMode` is a persisted `rtty`/`cw` choice independent of
+  `uart2Mode`. Selecting either receive-monitor tab or changing the
+  Configuration control selects that decoder/display mode and the matching
+  planned physical TUNE LED interpretation. UART2 continues to select only
+  its RTTY-input or Winkey-CW role; it does not force the receive monitor.
+- The setting is synchronized to web clients through the existing status and
+  heartbeat messages. The nine physical TUNE LEDs still cannot follow it:
+  their MCP23017 driver and DSP/tuning pipeline have not yet been implemented.
+- The CW monitor currently provides the UI and input-level display only.
+  CW spectrum, pitch detection, automatic WPM synchronization, and decoded
+  receive text remain unavailable until the receive DSP is implemented.
+
 ### Technical findings (verified via web research, not assumed)
 
 - **Standard demod approach — confirmed as the right model**: for two

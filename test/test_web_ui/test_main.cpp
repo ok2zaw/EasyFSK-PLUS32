@@ -73,6 +73,30 @@ void test_adc_level_meter_and_overload_state_are_connected_to_websocket() {
   assertContains("data.clipped === true");
 }
 
+void test_cw_monitor_and_builtin_transmitter_are_available_in_cw_mode() {
+  assertContains("id=\"nav-cw\" data-tab=\"cw\"");
+  assertContains("id=\"tab-cw\"");
+  assertContains("function applyMonitorMode(mode)");
+  assertContains("applyMonitorMode(cfg.rxMonitorMode || 'rtty')");
+  assertContains("id=\"cwPitchHz\" min=\"300\" max=\"1200\"");
+  assertContains("id=\"cwDecoderText\"");
+  assertContains("No live spectrum data is currently provided by the firmware.");
+  assertContains("id=\"cwBtnSend\"");
+  assertContains("id=\"cwBtnAbort\"");
+  assertContains("fetch('/api/tx/send'");
+  assertContains("JSON.stringify({ text: textInput.value, mode: 'cw' })");
+  assertContains("Queued for CW transmission.");
+  assertContains("id=\"rxMonitorMode\"");
+  assertContains("id=\"rxModeStatus\"");
+  assertContains("function saveMonitorMode(mode, openMonitor)");
+  assertContains("localRxModeOverride = mode;");
+  assertContains("if (openMonitor) activateTab(mode);");
+  assertContains("Selected ' + mode.toUpperCase() +");
+  assertContains("s.rxMonitorMode && localRxModeOverride === null");
+  assertContains("body: JSON.stringify({ rxMonitorMode: mode })");
+  assertContains("Independent of UART2");
+}
+
 void test_network_restart_requirement_is_visible_and_reported() {
   assertContains("pattern=\"[A-Za-z0-9](?:[A-Za-z0-9-]{0,29}[A-Za-z0-9])?\"");
   assertContains("Network changes take effect after restart.");
@@ -92,6 +116,7 @@ int main(int, char **) {
   RUN_TEST(test_tci_audio_controls_match_backend_ranges);
   RUN_TEST(test_tci_config_is_loaded_and_saved);
   RUN_TEST(test_adc_level_meter_and_overload_state_are_connected_to_websocket);
+  RUN_TEST(test_cw_monitor_and_builtin_transmitter_are_available_in_cw_mode);
   RUN_TEST(test_network_restart_requirement_is_visible_and_reported);
   RUN_TEST(test_storage_error_response_is_shown_to_user);
   return UNITY_END();

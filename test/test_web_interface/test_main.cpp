@@ -39,7 +39,7 @@ bool stopOnDelay = false;
 
 namespace {
 
-enum class TxCallKind { KeyUp, Byte, BufferedEnd, Abort };
+enum class TxCallKind { KeyUp, Byte, CwChar, BufferedEnd, Abort };
 
 struct TxCall {
   TxCallKind kind;
@@ -105,6 +105,7 @@ Config get() { return mock.config; }
 void configToJson(const Config &config, JsonObject out) {
   out["callsign"] = config.callsign;
   out["baudRate"] = config.baudRate;
+  out["rxMonitorMode"] = config.rxMonitorMode == RxMonitorMode::Cw ? "cw" : "rtty";
 }
 
 namespace WebConfigApi {
@@ -131,6 +132,11 @@ bool enqueueKeyUp(Source source) {
 
 bool enqueueByte(uint8_t byte, Source source) {
   mock.txCalls.push_back({TxCallKind::Byte, byte, source});
+  return mock.acceptQueueAttempt();
+}
+
+bool cwEnqueueChar(uint8_t byte) {
+  mock.txCalls.push_back({TxCallKind::CwChar, byte, Source::Winkey});
   return mock.acceptQueueAttempt();
 }
 
@@ -205,6 +211,7 @@ void test_get_config_returns_serialized_live_config() {
   TEST_ASSERT_EQUAL_STRING("application/json", request.contentType.c_str());
   JsonDocument body = responseJson(request);
   TEST_ASSERT_EQUAL_STRING("OK2ZAW", body["callsign"].as<const char *>());
+  TEST_ASSERT_EQUAL_STRING("rtty", body["rxMonitorMode"].as<const char *>());
   TEST_ASSERT_FLOAT_WITHIN(0.001f, 50.0f, body["baudRate"].as<float>());
 }
 
@@ -322,6 +329,7 @@ void test_system_route_tracks_link_loss_and_recovery() {
 
 void test_heartbeat_tracks_link_loss_and_recovery() {
   mock.status.revision = 42;
+  mock.config.rxMonitorMode = RxMonitorMode::Cw;
   WebServerMock::socket->sentBodies.clear();
   WebServerMock::socket->cleanupCount = 0;
 
@@ -336,6 +344,7 @@ void test_heartbeat_tracks_link_loss_and_recovery() {
   deserializeJson(lostHeartbeat, WebServerMock::socket->sentBodies[2]);
   TEST_ASSERT_EQUAL_STRING("heartbeat", lostHeartbeat["type"].as<const char *>());
   TEST_ASSERT_FALSE(lostHeartbeat["linkUp"].as<bool>());
+  TEST_ASSERT_EQUAL_STRING("cw", lostHeartbeat["rxMonitorMode"].as<const char *>());
 
   WebServerMock::socket->sentBodies.clear();
   ETH.linked = true;
@@ -344,6 +353,7 @@ void test_heartbeat_tracks_link_loss_and_recovery() {
   JsonDocument recoveredHeartbeat;
   deserializeJson(recoveredHeartbeat, WebServerMock::socket->sentBodies[2]);
   TEST_ASSERT_TRUE(recoveredHeartbeat["linkUp"].as<bool>());
+  TEST_ASSERT_EQUAL_STRING("cw", recoveredHeartbeat["rxMonitorMode"].as<const char *>());
   TEST_ASSERT_EQUAL_UINT32(2, WebServerMock::socket->cleanupCount);
   TEST_ASSERT_EQUAL_UINT32(2, TaskMock::delayCount);
 }
@@ -400,6 +410,118 @@ void test_send_appends_only_bytes_to_active_rtty_session() {
   TEST_ASSERT_EQUAL(TxCallKind::Byte, mock.txCalls[0].kind);
   TEST_ASSERT_EQUAL_UINT8('A', mock.txCalls[0].byte);
   TEST_ASSERT_EQUAL_UINT8('B', mock.txCalls[1].byte);
+}
+
+void test_cw_mode_send_queues_chars_for_the_builtin_cw_engine() {
+  mock.config.uart2Mode = Uart2Mode::Cw;
+  JsonDocument input;
+  input["text"] = "CQ";
+  input["mode"] = "cw";
+  JsonVariant json = input.as<JsonVariant>();
+  AsyncWebServerRequest request;
+
+  TEST_ASSERT_TRUE(server().dispatchJson("/api/tx/send", request, json));
+
+  TEST_ASSERT_EQUAL_INT(200, request.status);
+  TEST_ASSERT_EQUAL_STRING("{\"ok\":true}", request.body.c_str());
+  TEST_ASSERT_EQUAL_UINT32(2, mock.txCalls.size());
+  TEST_ASSERT_EQUAL(TxCallKind::CwChar, mock.txCalls[0].kind);
+  TEST_ASSERT_EQUAL_UINT8('C', mock.txCalls[0].byte);
+  TEST_ASSERT_EQUAL(TxManager::Source::Winkey, mock.txCalls[0].source);
+  TEST_ASSERT_EQUAL(TxCallKind::CwChar, mock.txCalls[1].kind);
+  TEST_ASSERT_EQUAL_UINT8('Q', mock.txCalls[1].byte);
+}
+
+void test_cw_send_appends_chars_to_active_cw_session() {
+  mock.config.uart2Mode = Uart2Mode::Cw;
+  mock.status.txActive = true;
+  mock.status.pttSource = TxManager::Source::Winkey;
+  JsonDocument input;
+  input["text"] = "AB";
+  input["mode"] = "cw";
+  JsonVariant json = input.as<JsonVariant>();
+  AsyncWebServerRequest request;
+
+  TEST_ASSERT_TRUE(server().dispatchJson("/api/tx/send", request, json));
+
+  TEST_ASSERT_EQUAL_INT(200, request.status);
+  TEST_ASSERT_EQUAL_UINT32(2, mock.txCalls.size());
+  TEST_ASSERT_EQUAL(TxCallKind::CwChar, mock.txCalls[0].kind);
+  TEST_ASSERT_EQUAL(TxCallKind::CwChar, mock.txCalls[1].kind);
+}
+
+void test_cw_send_rejects_empty_text_and_honors_queue_capacity() {
+  mock.config.uart2Mode = Uart2Mode::Cw;
+  JsonDocument input;
+  input["text"] = "";
+  input["mode"] = "cw";
+  JsonVariant json = input.as<JsonVariant>();
+  AsyncWebServerRequest empty;
+
+  TEST_ASSERT_TRUE(server().dispatchJson("/api/tx/send", empty, json));
+  TEST_ASSERT_EQUAL_INT(400, empty.status);
+  TEST_ASSERT_NOT_EQUAL(std::string::npos, empty.body.find("text_empty"));
+  TEST_ASSERT_TRUE(mock.txCalls.empty());
+
+  input["text"] = "CQ";
+  mock.freeSlots = 1;
+  AsyncWebServerRequest full;
+  TEST_ASSERT_TRUE(server().dispatchJson("/api/tx/send", full, json));
+  TEST_ASSERT_EQUAL_INT(503, full.status);
+  TEST_ASSERT_NOT_EQUAL(std::string::npos, full.body.find("tx_queue_full"));
+  TEST_ASSERT_TRUE(mock.txCalls.empty());
+
+  mock.freeSlots = 128;
+  mock.status.inhibited = true;
+  AsyncWebServerRequest inhibited;
+  TEST_ASSERT_TRUE(server().dispatchJson("/api/tx/send", inhibited, json));
+  TEST_ASSERT_EQUAL_INT(200, inhibited.status);
+  TEST_ASSERT_NOT_EQUAL(std::string::npos, inhibited.body.find("inhibited"));
+  TEST_ASSERT_TRUE(mock.txCalls.empty());
+}
+
+void test_cw_queue_failure_aborts_partial_web_request() {
+  mock.config.uart2Mode = Uart2Mode::Cw;
+  mock.failQueueAttempt = 2;
+  JsonDocument input;
+  input["text"] = "CQ";
+  input["mode"] = "cw";
+  JsonVariant json = input.as<JsonVariant>();
+  AsyncWebServerRequest request;
+
+  TEST_ASSERT_TRUE(server().dispatchJson("/api/tx/send", request, json));
+
+  TEST_ASSERT_EQUAL_INT(503, request.status);
+  TEST_ASSERT_EQUAL_UINT32(3, mock.txCalls.size());
+  TEST_ASSERT_EQUAL(TxCallKind::CwChar, mock.txCalls[0].kind);
+  TEST_ASSERT_EQUAL(TxCallKind::CwChar, mock.txCalls[1].kind);
+  TEST_ASSERT_EQUAL(TxCallKind::Abort, mock.txCalls[2].kind);
+}
+
+void test_cw_send_requires_winkey_uart2_transmit_route() {
+  JsonDocument input;
+  input["text"] = "CQ";
+  input["mode"] = "cw";
+  JsonVariant json = input.as<JsonVariant>();
+  AsyncWebServerRequest request;
+
+  TEST_ASSERT_TRUE(server().dispatchJson("/api/tx/send", request, json));
+  TEST_ASSERT_EQUAL_INT(409, request.status);
+  TEST_ASSERT_NOT_EQUAL(std::string::npos, request.body.find("cw_tx_mode_not_enabled"));
+  TEST_ASSERT_TRUE(mock.txCalls.empty());
+}
+
+void test_send_rejects_unknown_explicit_mode() {
+  JsonDocument input;
+  input["text"] = "CQ";
+  input["mode"] = "morse-ish";
+  JsonVariant json = input.as<JsonVariant>();
+  AsyncWebServerRequest request;
+
+  TEST_ASSERT_TRUE(server().dispatchJson("/api/tx/send", request, json));
+  TEST_ASSERT_EQUAL_INT(400, request.status);
+  TEST_ASSERT_NOT_EQUAL(std::string::npos, request.body.find("invalid_mode"));
+  TEST_ASSERT_TRUE(mock.txCalls.empty());
 }
 
 void test_send_preflight_rejections_do_not_touch_queue() {
@@ -488,6 +610,12 @@ int main(int, char **) {
   RUN_TEST(test_adc_level_and_overload_are_pushed_to_websocket);
   RUN_TEST(test_idle_send_queues_complete_web_session);
   RUN_TEST(test_send_appends_only_bytes_to_active_rtty_session);
+  RUN_TEST(test_cw_mode_send_queues_chars_for_the_builtin_cw_engine);
+  RUN_TEST(test_cw_send_appends_chars_to_active_cw_session);
+  RUN_TEST(test_cw_send_rejects_empty_text_and_honors_queue_capacity);
+  RUN_TEST(test_cw_queue_failure_aborts_partial_web_request);
+  RUN_TEST(test_cw_send_requires_winkey_uart2_transmit_route);
+  RUN_TEST(test_send_rejects_unknown_explicit_mode);
   RUN_TEST(test_send_preflight_rejections_do_not_touch_queue);
   RUN_TEST(test_mid_send_queue_failure_aborts_without_queuing_remainder);
   RUN_TEST(test_end_and_abort_routes_report_queue_results);

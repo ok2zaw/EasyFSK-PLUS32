@@ -101,6 +101,7 @@ void configToJson(const Config &cfg, JsonObject out) {
   out["paTailMs"] = cfg.paTailMs;
   out["liveLcdText"] = cfg.liveLcdText;
   out["uart2Mode"] = (cfg.uart2Mode == Uart2Mode::Cw) ? "cw" : "fsk2";
+  out["rxMonitorMode"] = (cfg.rxMonitorMode == RxMonitorMode::Cw) ? "cw" : "rtty";
   out["cwSpeedWpm"] = cfg.cwSpeedWpm;
 
   JsonObject net = out["network"].to<JsonObject>();
@@ -232,6 +233,24 @@ static bool configMerge(JsonVariantConst in, Config &out, JsonObject errors,
       }
     } else {
       errors["uart2Mode"] = "must be a string";
+      ok = false;
+    }
+  }
+
+  JsonVariantConst rxMonitorMode = in["rxMonitorMode"];
+  if (!rxMonitorMode.isNull()) {
+    if (rxMonitorMode.is<const char *>()) {
+      const char *m = rxMonitorMode.as<const char *>();
+      if (strcmp(m, "rtty") == 0) {
+        result.rxMonitorMode = RxMonitorMode::Rtty;
+      } else if (strcmp(m, "cw") == 0) {
+        result.rxMonitorMode = RxMonitorMode::Cw;
+      } else {
+        errors["rxMonitorMode"] = "must be \"rtty\" or \"cw\"";
+        ok = false;
+      }
+    } else {
+      errors["rxMonitorMode"] = "must be a string";
       ok = false;
     }
   }

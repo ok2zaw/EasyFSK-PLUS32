@@ -8,6 +8,7 @@
 #include "FskTimer.h"
 #include "ModeSelect.h"
 #include "TxManager.h"
+#include "TciAfsk.h"
 #include "WebConfigApi.h"
 #include "WinkeyEmulator.h"
 
@@ -19,6 +20,7 @@ struct DependencyMock {
   TxManager::Status status;
   int txApplyCount = 0;
   int fskReconfigureCount = 0;
+  int tciApplyCount = 0;
   int winkeyApplyCount = 0;
   int modeSelectCount = 0;
   Config txConfig;
@@ -57,6 +59,12 @@ void reconfigure(float baudRate, bool markHigh) {
 
 } // namespace FskTimer
 
+namespace TciAfsk {
+
+void applyConfig(const Config &) { mock.tciApplyCount++; }
+
+} // namespace TciAfsk
+
 namespace WinkeyEmulator {
 
 void applyConfig(const Config &cfg) {
@@ -88,6 +96,8 @@ void test_begin_loads_defaults_when_file_is_missing() {
   TEST_ASSERT_EQUAL_STRING("", cfg.callsign);
   TEST_ASSERT_FLOAT_WITHIN(0.001f, 45.45f, cfg.baudRate);
   TEST_ASSERT_EQUAL_UINT8(20, cfg.cwSpeedWpm);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(RxMonitorMode::Rtty),
+                          static_cast<uint8_t>(cfg.rxMonitorMode));
 }
 
 void test_idle_valid_update_is_saved_then_applied_everywhere() {
@@ -96,6 +106,7 @@ void test_idle_valid_update_is_saved_then_applied_everywhere() {
   input["baudRate"] = 50;
   input["polarity"] = "markLow";
   input["uart2Mode"] = "cw";
+  input["rxMonitorMode"] = "cw";
   input["cwSpeedWpm"] = 32;
   JsonDocument errorDoc;
 
@@ -109,10 +120,13 @@ void test_idle_valid_update_is_saved_then_applied_everywhere() {
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Uart2Mode::Cw),
                           static_cast<uint8_t>(current.uart2Mode));
   TEST_ASSERT_EQUAL_UINT8(32, current.cwSpeedWpm);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(RxMonitorMode::Cw),
+                          static_cast<uint8_t>(current.rxMonitorMode));
   TEST_ASSERT_TRUE(LittleFS.fileExists);
 
   TEST_ASSERT_EQUAL_INT(1, mock.txApplyCount);
   TEST_ASSERT_EQUAL_INT(1, mock.fskReconfigureCount);
+  TEST_ASSERT_EQUAL_INT(1, mock.tciApplyCount);
   TEST_ASSERT_EQUAL_INT(1, mock.winkeyApplyCount);
   TEST_ASSERT_EQUAL_INT(1, mock.modeSelectCount);
   TEST_ASSERT_FLOAT_WITHIN(0.001f, 50.0f, mock.baudRate);
@@ -125,6 +139,8 @@ void test_idle_valid_update_is_saved_then_applied_everywhere() {
   TEST_ASSERT_TRUE(configLoad(persisted));
   TEST_ASSERT_EQUAL_STRING("OK2ZAW", persisted.callsign);
   TEST_ASSERT_EQUAL_UINT8(32, persisted.cwSpeedWpm);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(RxMonitorMode::Cw),
+                          static_cast<uint8_t>(persisted.rxMonitorMode));
 }
 
 void test_active_tx_rejects_update_without_save_or_live_change() {
