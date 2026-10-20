@@ -49,10 +49,10 @@ void onEthEvent(WiFiEvent_t event) {
 } // namespace
 
 void setup() {
-  // Safety first, matching the AVR reference firmware: PTT/PA must be driven
-  // inactive before Serial, flash, LCD splash, Ethernet, or timer setup can
-  // delay startup. External pull-downs are still required to cover the ROM
-  // bootloader window before setup() begins.
+  // Safety first, matching the AVR reference firmware: PTT/PA and the CW key
+  // output must be inactive before Serial, flash, LCD splash, Ethernet, or
+  // timer setup can delay startup. External PTT pull-downs and the GPIO12
+  // strap's reset LOW level must also cover the ROM bootloader window.
   TxManager::prepareSafePins();
 
   Serial.begin(9600); // matches the AVR original's serialSpeed, 8-N-1

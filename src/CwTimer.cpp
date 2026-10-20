@@ -54,14 +54,14 @@ void ARDUINO_ISR_ATTR onTick() {
     // NOT an "underrun" in the RTTY sense (CW naturally has gaps between
     // characters/words while the host is thinking), so no counter/fallback
     // symbol needed, just idle.
-    digitalWrite(FSK_PIN, LOW);
+    digitalWrite(CW_KEY_PIN, LOW);
     return;
   }
 
   s_currentKeyDown = run.keyDown;
   s_remainingMs = run.durationMs;
   s_haveCurrent = (s_remainingMs > 0);
-  digitalWrite(FSK_PIN, run.keyDown ? HIGH : LOW);
+  digitalWrite(CW_KEY_PIN, run.keyDown ? HIGH : LOW);
 
   if (run.asciiByte != 0) {
     s_charStartedAscii = run.asciiByte;
@@ -78,8 +78,8 @@ void ARDUINO_ISR_ATTR onTick() {
 } // namespace
 
 void begin() {
-  pinMode(FSK_PIN, OUTPUT);
-  digitalWrite(FSK_PIN, LOW);
+  pinMode(CW_KEY_PIN, OUTPUT);
+  digitalWrite(CW_KEY_PIN, LOW);
 
   // Arduino-ESP32 2.x timer API. Run the counter at 1MHz and fire every
   // 1000 ticks, which gives the CW engine its 1ms scheduling period.
@@ -101,7 +101,7 @@ void resetForNewTx() {
   s_charStartedFlag = false;
 }
 
-void holdKeyUp() { digitalWrite(FSK_PIN, LOW); }
+void holdKeyUp() { digitalWrite(CW_KEY_PIN, LOW); }
 
 bool ringHasFreeSlot() { return !ringFull(); }
 

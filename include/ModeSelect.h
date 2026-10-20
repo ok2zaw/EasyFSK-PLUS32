@@ -2,11 +2,10 @@
 
 // ---------------------------------------------------------------------------
 // Hardware routing control line (`MODE_SEL_PIN` in the design doc): a
-// static-level signal telling the board's downstream analog/interface
-// circuitry which conditioning path FSK_PIN's signal should be routed
-// through -- LOW while FSK_PIN carries RTTY mark/space shift keying (UART1
-// always, or UART2 in "fsk2" mode), HIGH while it carries a plain CW
-// key-down/key-up line (UART2 in "cw"/Winkey mode). It changes only when
+// static-level signal telling downstream interface circuitry which operating
+// mode is active -- LOW for RTTY (FSK_PIN), HIGH for CW (CW_KEY_PIN). The
+// keying signals now have separate GPIOs; this is a mode indicator/routing
+// control, not a selector for a shared keying pin. It changes only when
 // `uart2Mode` changes (a config-apply-time action, not a per-keystroke
 // signal) -- see ConfigStore::applyAndSave().
 //

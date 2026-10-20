@@ -194,11 +194,11 @@ superseded in part when the independent UART2/Winkey input was implemented.
 The current firmware moves `CPU_INH_PIN` from GPIO15 to input-only GPIO35
 (therefore requiring an external pull-up), assigns UART2 TX/RX to GPIO15/36,
 uses GPIO34 for the RX audio ADC monitor (added 2026-10-13), and still drives
-`LED_RX_PIN` on GPIO2 plus the reserved `ON_PIN` on GPIO14.
-The later MCP23017/encoder plan remains future work: once implemented it will
-move the RX LED to the expander, remove `ON_PIN`, and reuse GPIO2/GPIO14 for
-the encoder. `include/Pins.h` and the README's GPIO table are authoritative
-for the firmware that exists today.
+`LED_RX_PIN` on GPIO2. The encoder is now definitively assigned GPIO2/GPIO14;
+its handling is not implemented, and the RX LED must move to the MCP23017
+before GPIO2 is used by the encoder. The unused `ON_PIN` assignment was
+removed to free GPIO14. `include/Pins.h` and the README's GPIO table describe
+the confirmed pin plan and call out firmware not yet migrated.
 
 | Signal | J1 pin / GPIO | Rationale |
 |---|---|---|
@@ -210,31 +210,25 @@ for the firmware that exists today.
 | `RX_AUDIO_ADC_PIN` | ADC1 / GPIO34 | RX audio input, ADC1 channel 6, sampled by the DMA monitor |
 | `UART2_TX_PIN` | CS / GPIO15 | Second hardware UART, mode-switched between FSK2 and Winkey |
 | `UART2_RX_PIN` | GPIO36 | Second hardware UART RX; input-only is suitable, no pull resistor available |
-| `LED_RX_PIN` (current implementation) | OUT1 / GPIO2 | RX indicator is still a direct ESP32 GPIO; the MCP23017 move is planned only |
-| `ON_PIN` (current implementation; unused) | CLK / GPIO14 | Reserved/unused, matching the AVR original |
-| `ENC_A_PIN` (planned encoder quadrature A; not implemented) | OUT1 / GPIO2 | Planned to replace the current GPIO2 RX LED after that LED moves to MCP23017; intended to use ESP32 PCNT |
-| `ENC_B_PIN` (planned encoder quadrature B; not implemented) | CLK / GPIO14 | Planned for the encoder after removing the current unused `ON_PIN` assignment |
-| *(reserved, avoid using)* | MISO / GPIO12 | **Deliberately left unconnected.** This is MTDI, the flash-voltage-select strap — the one genuinely risky pin (wrong flash voltage detection at boot, not just a cosmetic/log-verbosity issue like the others). With outputs free to assign, there's no reason to touch it. |
+| `LED_RX_PIN` (current firmware) | OUT1 / GPIO2 | RX indicator; hardware plan moves it to MCP23017 before GPIO2 is used by the encoder |
+| `ENC_A_PIN` (confirmed hardware assignment) | OUT1 / GPIO2 | Encoder quadrature A; intended for ESP32 PCNT; encoder firmware not implemented |
+| `ENC_B_PIN` (confirmed hardware assignment) | CLK / GPIO14 | Encoder quadrature B; replaces the unused legacy `ON_PIN`; encoder firmware not implemented |
+| `CW_KEY_PIN` (confirmed dedicated CW output) | MISO / GPIO12 | Active HIGH; GPIO12 is the MTDI flash-voltage strap and must remain LOW at reset. The external load must not pull it HIGH; firmware initializes it LOW early in setup. |
 
-The `ENC_A_PIN`/`ENC_B_PIN` rows are future assignments, not concurrent
-with the current `LED_RX_PIN`/`ON_PIN` definitions. The firmware's actual
-assignments are in `include/Pins.h`.
-
-**2026-09-02 planned pin allocation (not implemented in the current
-firmware):** the design moves `LED_RX_PIN` from OUT1/GPIO2 to the
-MCP23017, removes the unused `ON_PIN` on GPIO14, and assigns GPIO2/GPIO14
-to the encoder's quadrature A/B inputs, decoded with the ESP32's hardware
-PCNT peripheral. The current `include/Pins.h` still uses GPIO2 for
-`LED_RX_PIN` and reserves GPIO14 as unused `ON_PIN`; do not wire the
-planned encoder allocation as if the firmware already supported it.
+The encoder pin assignment is final for the hardware plan, but encoder
+handling is not implemented in firmware. The current firmware still drives
+`LED_RX_PIN` on GPIO2; move that LED to the MCP23017 before connecting the
+encoder. The unused legacy `ON_PIN` assignment and its initialization have
+been removed so GPIO14 is available for encoder B.
 
 GPIO35 and GPIO36 are no longer spare: the current firmware uses GPIO35
 for `CPU_INH_PIN` (external pull-up required) and GPIO36 for UART2 RX.
 GPIO34 remains the proposed, currently unassigned ADC audio input. The
-planned encoder and the current assignments together use the available
-direct pins while deliberately leaving GPIO12 (MISO) unused. Any further
-physical controls remain planned for the MCP23017, whose allocation is
-described below; the expander driver itself is not implemented yet.
+confirmed encoder and dedicated CW output assignments use the available
+direct pins. GPIO12 is used despite its strapping role only with a load that
+does not pull it HIGH at reset. Any further physical controls remain planned
+for the MCP23017, whose allocation is described below; the expander driver
+itself is not implemented yet.
 
 ## Web UI architecture (config + monitoring + manual TX)
 
@@ -516,7 +510,7 @@ Page ↔ endpoint mapping:
    `loop()` right after SerialControl (UART1 therefore has priority).
    In `fsk2` mode it forwards the same `[`/`]`/`\` protocol as UART1; in
    `cw` mode it parses the Winkey host protocol and feeds TxManager's CW
-   engine (`Morse`/`CwTimer`, `FSK_PIN` used as a plain key line).
+   engine (`Morse`/`CwTimer`, `CW_KEY_PIN` used as the dedicated key line).
 
 **Naming note:** "UART1"/"FSK1" in the code and LCD means the primary
 logger link, which is the ESP32's hardware **UART0** (`Serial`, J1
@@ -1337,17 +1331,18 @@ out over the two alternatives considered:
 - **GPIO budget was the deciding factor, and it strongly favored I2C.**
   In the current firmware, GPIO15 is already UART2 TX, GPIO35 is the
   inhibit input, and GPIO36 is UART2 RX; GPIO34 is reserved by this
-  design for future ADC audio input. GPIO12 is deliberately left
-  unconnected due to its flash-voltage strapping role. There is, in
-  practice, **no spare general-purpose output pin left on this board**
-  for a shift register's 3 control lines (data/clock/latch)
-  without either reclaiming an already-assigned signal or using the
-  deliberately-avoided GPIO12 — neither is attractive. This ruled out
+  design for future ADC audio input. GPIO12 is now assigned to the
+  dedicated CW key output, with the constraint that it must be LOW at reset
+  because it is the flash-voltage strap. There is, in practice, **no spare
+  general-purpose output pin left on this board** for a shift register's 3
+  control lines (data/clock/latch) without reclaiming an already-assigned
+  signal. This ruled out
   **74HC595**, not because the chip is bad, but because this specific
   board's pin budget doesn't have room for it. (Cascading multiple
   74HC595s for >8 outputs doesn't help the pin problem — the daisy
   chain still needs the same 3 initial GPIOs.) The planned future
-  encoder allocation for GPIO2/GPIO14 is not yet implemented. The
+  confirmed encoder allocation for GPIO2/GPIO14 still needs firmware
+  implementation. The
   MCP23017 decision for the bargraph stands regardless: I2C needs zero
   additional ESP32 GPIO pins.
 - **MCP23017 needs zero additional GPIO pins** — it sits on the
@@ -1773,12 +1768,12 @@ these two** the user wants.
 earlier, this board had zero free general-purpose GPIO, so the plan
 below was to put the encoder's A/B (and optionally a pushbutton) on
 spare MCP23017 pins, polled from firmware. That constraint no longer
-holds: removing `ON_PIN` and moving `LED_RX_PIN` to the MCP23017 (see
-above) freed OUT1/GPIO2 and CLK/GPIO14, and those two pins are now
-**directly assigned to the encoder's quadrature A/B lines**
-(`ENC_A_PIN`/GPIO2, `ENC_B_PIN`/GPIO14 — see the GPIO mapping table),
-decoded by the ESP32's hardware **PCNT** peripheral rather than polled
-over I2C.
+holds: the confirmed hardware plan moves `LED_RX_PIN` to the MCP23017 and
+removes `ON_PIN`, assigning OUT1/GPIO2 and CLK/GPIO14 to the encoder's
+quadrature A/B lines (`ENC_A_PIN`/GPIO2, `ENC_B_PIN`/GPIO14 — see the GPIO
+mapping table), intended for decoding by the ESP32's hardware **PCNT**
+peripheral rather than polling over I2C. Encoder handling and the LED
+migration are not implemented in firmware yet.
 
 - **This is a strict upgrade over the MCP23017-polling plan**: PCNT
   decodes quadrature transitions in hardware, so the earlier "honest
@@ -1858,7 +1853,8 @@ a new one, so existing logging software works unmodified. Researched
 before designing (K3NG keyer, the official Winkey protocol, and this
 board's own existing serial link) — see below — then the architecture
 was narrowed down through a couple of quick confirmations from the user
-into something that needs **zero new GPIO pins**.
+into a dedicated CW output on GPIO12 (confirmed 2026-10-20), rather than
+sharing the RTTY output.
 
 ### UART1/UART2 split (decided and implemented 2026-09-27)
 
@@ -1868,7 +1864,8 @@ into something that needs **zero new GPIO pins**.
   with two roles selected by `uart2Mode`:
   - `fsk2`: a second RTTY input, 9600/8-N-1, same `[`/`]`/`\` protocol,
     tagged `FSK2` on the LCD.
-  - `cw`: Winkey host protocol, 1200/8-N-2, keying CW on `FSK_PIN`,
+  - `cw`: Winkey host protocol, 1200/8-N-2, keying CW on `CW_KEY_PIN`
+    (GPIO12; HIGH=key down, LOW=key up), separate from RTTY's `FSK_PIN`,
     tagged `CWK`.
 - `uart2Mode` is switched from the web Configuration page, and later from
   the encoder long-press. Like every config change, it is refused during an
@@ -1932,12 +1929,11 @@ into something that needs **zero new GPIO pins**.
   mode-select LED section above) — firmware needs to discriminate
   press duration (a threshold around 700-800ms is a reasonable starting
   point; not yet bench-verified, see open questions).
-- **Zero new GPIO pins, by reusing what's already there**, since RTTY
-  and CW are mutually exclusive by design:
-  - **CW keying line reuses `FSK_PIN`** (OUT2/GPIO5) — idle during CW
-    mode since the FSK tone generator isn't running then. In CW mode
-    the same pin just goes high/low for key-down/key-up instead of
-    toggling mark/space tones.
+- **Dedicated CW keying GPIO (confirmed 2026-10-20):** `CW_KEY_PIN`
+  (MISO/GPIO12) is active HIGH for key-down and LOW for key-up. The
+  external load must not pull GPIO12 HIGH during reset; it is the ESP32
+  MTDI flash-voltage strap, and a HIGH strap can prevent boot with 3.3V
+  flash. `FSK_PIN` (OUT2/GPIO5) remains dedicated to RTTY mark/space.
   - **`PTT_PIN`/`PTT_PA_PIN` reused as-is** — same lead/tail sequencer
     already built for FSK, just triggered by CW key-down/key-up events
     instead of FSK bit-toggle events. Winkey's own PTT lead/tail
@@ -1949,13 +1945,10 @@ into something that needs **zero new GPIO pins**.
     for it — the radio or the PC already provides sidetone.
   - **One new MCP23017 output, `MODE_SEL_PIN`** (confirmed 2026-09-03,
     **corrected the same day — this is not an LED/activity indicator**,
-    it's a hardware routing control line). Since `FSK_PIN` is now
-    shared between two electrically different jobs (FSK shift-keying
-    output in RTTY mode vs. a plain CW key-down/key-up line in CW
-    mode), the downstream analog/interface circuitry likely needs to be
-    switched to match — e.g. a relay or analog switch selecting which
-    conditioning circuit `FSK_PIN`'s signal is routed through.
-    `MODE_SEL_PIN` is that control line, driven directly from
+    it's a hardware routing control line). `MODE_SEL_PIN` tells downstream
+    interface circuitry which operating mode is active (for example, to
+    select the RTTY or CW signal path); the keying signals themselves now
+    have separate GPIOs. It is driven directly from
     `serialMode` as a static level (not a per-dit/dah pulse): **LOW for
     RTTY, HIGH for CW/Winkey active**. Takes the last spare MCP23017
     pin — see the updated pin budget above (15 of 16 committed, 1
@@ -2013,11 +2006,11 @@ into something that needs **zero new GPIO pins**.
   (implemented: TxManager `configMAX_PRIORITIES - 2` on core 1, web push
   task priority 1 on core 0) — not re-confirmed with the user, but
   consistent with the large timing margins involved.
-- **Future encoder pin allocation (not implemented):** the plan is to
-  move `LED_RX_PIN` from GPIO2 to the MCP23017, remove unused `ON_PIN`
-  on GPIO14, and use GPIO2/GPIO14 for the encoder A/B inputs. Until that
-  work lands, current firmware still defines `LED_RX_PIN` on GPIO2 and
-  reserves GPIO14 as `ON_PIN`; see the GPIO mapping table above.
+- **Confirmed encoder pin allocation; firmware not implemented:** use
+  GPIO2/GPIO14 for encoder A/B, move `LED_RX_PIN` from GPIO2 to the
+  MCP23017, and remove the unused `ON_PIN` on GPIO14. Until the MCP23017
+  LED migration lands, current firmware still drives `LED_RX_PIN` on
+  GPIO2; see the GPIO mapping table above.
 - The encoder pushbutton and its mode-cycle/long-press gestures are
   decided future hardware/firmware work. `cwSpeedWpm` and Winkey CW
   speed control already exist; encoder-based adjustment of that speed

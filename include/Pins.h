@@ -3,16 +3,15 @@
 // ---------------------------------------------------------------------------
 // GPIO mapping for EasyFSK-PLUS32 on the Impero32 board (ESP32-WROOM-32U).
 //
-// This is the mapping implemented by the current firmware. The design log
-// also contains future MCP23017/encoder assignments that have deliberately
-// not been applied yet; README.md and this header are authoritative for a
-// board running this revision. Rationale is repeated below so the header is
+// This is the current firmware mapping plus confirmed hardware assignments.
+// Some assigned features (including the encoder and MCP23017) are not yet
+// implemented in firmware. README.md and this header are authoritative for
+// the board pin plan. Rationale is repeated below so the header is
 // self-explanatory without the design document in hand.
 //
 // Do NOT reassign these without re-checking the design doc's strapping-pin
-// discussion -- several of these were chosen specifically to avoid ESP32
-// boot-strapping pins (GPIO0, 2, 5, 12, 15), with GPIO12 (MTDI, flash
-// voltage select) deliberately left completely unused.
+// discussion. GPIO12 (MTDI, flash-voltage select) is assigned to CW only
+// with an external circuit that leaves it LOW during reset.
 // ---------------------------------------------------------------------------
 
 // --- EasyFSK signal pins (J1 connector) -------------------------------------
@@ -31,6 +30,12 @@
 // satisfied by the pin's own internal pull-up -- low risk.
 #define FSK_PIN 5
 
+// Dedicated CW keying output, active HIGH (key down); LOW is idle/key up.
+// J1 MISO / GPIO12 is also the ESP32 MTDI flash-voltage strap: it must remain
+// LOW at reset for 3.3V flash. Its internal pull-down provides that strap
+// level; the external CW load must not pull this pin HIGH during reset.
+#define CW_KEY_PIN 12
+
 // Hardware inhibit input, active LOW (idle/not-inhibited = HIGH).
 // Moved 2026-09-27 (see design doc's GPIO mapping section) from CS/GPIO15
 // onto ADC2/GPIO35 to free GPIO15 for UART2 (below). GPIO35 is input-only
@@ -40,13 +45,16 @@
 #define CPU_INH_PIN 35
 
 // RX indicator LED (cosmetic only -- opposite sense of PTT_PIN).
-// J1 pin: OUT1. Board's own "avoid pulling low at reset" caution is
-// harmless for an LED -- worst case is a boot-time flicker.
+// Current firmware still drives J1 OUT1 / GPIO2. The confirmed hardware
+// plan moves it to the MCP23017; complete that migration before using GPIO2
+// for the encoder.
 #define LED_RX_PIN 2
 
-// Reserved/unused today, mirrors the AVR original's unused ON_PIN.
-// J1 pin: CLK.
-#define ON_PIN 14
+// Confirmed rotary encoder quadrature inputs; encoder handling is not yet
+// implemented. GPIO2 is dedicated to the encoder after LED_RX moves to the
+// MCP23017. GPIO14 replaces the unused legacy ON_PIN assignment.
+#define ENC_A_PIN 2
+#define ENC_B_PIN 14
 
 // External hardware PTT-request input (RTS-style), active LOW, external
 // pull-up expected (input-only pin, no internal pull available).
@@ -57,10 +65,6 @@
 // RTTY/FFT processing. ADC1 channel 6; input-only is appropriate here.
 // J1 pin: ADC1.
 #define RX_AUDIO_ADC_PIN 34
-
-// Deliberately unused: J1 MISO / GPIO12 (MTDI, flash-voltage-select strap)
-// -- the one genuinely risky pin on this board. Do not assign it.
-// #define UNUSED_RESERVED_PIN 12
 
 // --- UART2 (added 2026-09-27, freed by the CPU_INH_PIN move above) --------
 //

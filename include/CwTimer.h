@@ -5,11 +5,9 @@
 
 // ---------------------------------------------------------------------------
 // CW element-timer ISR + lookahead ring buffer -- the Winkey/CW counterpart
-// to FskTimer.h, same architectural role: the ONLY code that toggles
-// FSK_PIN while a Winkey-sourced transmission is active (FSK_PIN is REUSED
-// as the plain CW key line per the design doc -- idle during CW since the
-// Baudot tone generator isn't running then), driven from a real hardware
-// timer ISR so keying timing doesn't depend on task scheduling latency.
+// to FskTimer.h. It exclusively toggles the dedicated CW_KEY_PIN while a
+// Winkey-sourced transmission is active, driven from a real hardware timer
+// ISR so keying timing doesn't depend on task scheduling latency.
 //
 // Unlike FskTimer (which reprograms its timer alarm period per RTTY baud
 // rate), CwTimer runs its timer at a FIXED 1ms tick and counts down a
@@ -20,10 +18,8 @@
 
 namespace CwTimer {
 
-// Sets up the fixed 1ms timer and attaches the ISR. Call once from setup(),
-// after pinMode() on FSK_PIN (shared with FskTimer -- whichever of the two
-// engines is actually active is the only one touching the pin's level at
-// any given moment, enforced by TxManager's single-state-machine design).
+// Sets up the dedicated CW output and fixed 1ms timer, then attaches the ISR.
+// Call once from setup(); the output is initialized idle LOW.
 void begin();
 
 // TxManager (sole writer) tells the ISR whether it should be running at
@@ -36,10 +32,10 @@ void setActive(bool active);
 // transmission.
 void resetForNewTx();
 
-// Direct FSK_PIN level control for TxManager's lead/tail state machine,
+// Direct CW_KEY_PIN level control for TxManager's lead/tail state machine,
 // mirroring FskTimer::holdMark()/holdSpace(). ONLY safe to call while the
-// ISR is inactive (active == false). CW's "key up" idle level is simply
-// LOW (no mark/space polarity concept -- this is a plain on/off key line).
+// ISR is inactive (active == false). CW's "key up" idle level is LOW (no
+// mark/space polarity concept -- this is a plain on/off key line).
 void holdKeyUp();
 
 // Producer-side (TxManager) ring buffer access, same shape as FskTimer's.

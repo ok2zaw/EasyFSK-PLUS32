@@ -27,9 +27,9 @@ implemented in this code** (RTTY tuning indicator + spectrum waterfall,
 signal-quality meter, RX/TX audio level digipot trim via the rotary
 encoder, a 9-LED tuning bargraph, and an RTTY receive decoder). UART2 and
 the initial Winkey/CW engine are implemented, but the physical MCP23017
-`MODE_SEL_PIN` remains a stub. Future encoder/MCP23017 work still implies
-GPIO changes (`ON_PIN` removal and moving `LED_RX_PIN` off GPIO2); the table
-below deliberately describes the firmware as it is built today.
+`MODE_SEL_PIN` remains a stub. The encoder's GPIO assignment is confirmed
+below, but encoder handling and the RX LED migration to MCP23017 are not
+implemented yet.
 
 ## Hardware
 
@@ -45,26 +45,32 @@ below deliberately describes the firmware as it is built today.
 | Signal | GPIO | Notes |
 |---|---|---|
 | `FSK_PIN` | 5 | FSK keying output (mark/space) |
+| `CW_KEY_PIN` | 12 | Dedicated CW key output, active HIGH; GPIO12 is a boot strap and the external load must leave it LOW at reset |
 | `PTT_PIN` | 16 | Main relay PTT, safety-critical, defaults LOW |
 | `PTT_PA_PIN` | 13 | PA/amp-stage PTT, safety-critical, defaults LOW |
 | `CPU_INH_PIN` | 35 | Hardware inhibit input (active LOW, **mandatory external pull-up**) |
-| `LED_RX_PIN` | 2 | RX indicator LED |
-| `ON_PIN` | 14 | Reserved, unused |
+| Encoder A / B (`ENC_A_PIN` / `ENC_B_PIN`) | 2 / 14 | Confirmed hardware assignment; encoder firmware not implemented. GPIO2 is still used by the RX LED in the current firmware until that LED moves to the MCP23017. |
+| `LED_RX_PIN` | 2 (current firmware) | RX indicator; confirmed hardware plan moves it to the MCP23017 before GPIO2 is used by the encoder |
 | `PTT_USB_RTS_PIN` | 39 | External hardware PTT-request input (active LOW, **mandatory external pull-up**) |
 | UART2 TX / RX | 15 / 36 | FSK2 at 9600/8-N-1 or Winkey CW at 1200/8-N-2; RX is input-only |
 | I2C SDA / SCL (status LCD) | 32 / 33 | Moved off the ESP32 defaults — those pins are used by Ethernet |
 | Ethernet | 19/21/22/25/26/27 (RMII data), 23/18 (MDC/MDIO), 17 (oscillator enable), 0 (REFCLK in) | Fixed by the ESP32 EMAC; PHY address is **1**, not the arduino-esp32 default of 0 |
 
-See `include/Pins.h` for the full rationale (several of these were
-deliberately chosen to avoid ESP32 boot-strapping pins; GPIO12 is left
-completely unused on purpose).
+See `include/Pins.h` for the full rationale. GPIO12 is used for CW only
+because the external keying load is connected toward GND and must not pull
+the pin HIGH during reset. GPIO12 is the ESP32 flash-voltage strap; HIGH at
+reset can select 1.8V flash supply and prevent boot with 3.3V flash. Firmware
+initializes the CW output LOW before other peripherals.
 
 ### Boot and input safety
 
-`PTT_PIN` and `PTT_PA_PIN` are driven LOW as the first operation in
+`PTT_PIN`, `PTT_PA_PIN`, and `CW_KEY_PIN` are driven to their inactive
+levels as the first operation in
 `setup()`, before Serial, LittleFS, LCD, Ethernet, or timers are initialized.
 Firmware cannot control the earlier ESP32 ROM bootloader window, so the relay
-driver hardware should also provide external pull-downs on both outputs.
+driver hardware should also provide external pull-downs on both PTT outputs.
+GPIO12's internal pull-down must keep the CW output at its safe LOW strap
+level until firmware takes control.
 
 GPIO35 (`CPU_INH_PIN`) and GPIO39 (`PTT_USB_RTS_PIN`) have no internal pull
 resistors. Both active-LOW inputs therefore require external pull-ups; do not
@@ -141,8 +147,9 @@ setting:
 - **`fsk2`** — a second RTTY control input at 9600/8-N-1, with the same
   `[` / `]` / `\` convention as the main serial link.
 - **`cw`** — K1EL **WinKey** host-protocol emulation at 1200/8-N-2. Logging
-  software configured for a WinKeyer keys CW on `FSK_PIN` (used as a plain
-  on/off key line), with the same PTT/PA lead-tail sequencing as RTTY.
+  software configured for a WinKeyer keys CW on the dedicated `CW_KEY_PIN`
+  (GPIO12, HIGH=key down, LOW=key up), with the same PTT/PA lead-tail
+  sequencing as RTTY. RTTY continues to use `FSK_PIN` (GPIO5).
 
 The emulator identifies itself as a **WK2 (revision 23)**. It supports:
 

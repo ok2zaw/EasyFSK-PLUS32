@@ -23,8 +23,7 @@
 //   - Morse/CwTimer, for CW (Source::Winkey only).
 // Exactly one of the two is ever active at a time -- the state machine's
 // existing single-`s_state` design already enforces "only one TX session at
-// a time regardless of source", which is what keeps the two engines from
-// ever fighting over the shared FSK_PIN.
+// a time regardless of source". RTTY uses FSK_PIN; CW has its own CW_KEY_PIN.
 //
 // PTT/PA lead-tail sequencing is a NON-BLOCKING state machine (checked once
 // per task iteration via millis()), not blocking delay()/waitDrainingSerial()

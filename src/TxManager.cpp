@@ -703,12 +703,12 @@ void prepareSafePins() {
   // pulse as the GPIO switches from reset input mode to output mode.
   setPttOutput(false);
   setPaOutput(false);
+  digitalWrite(CW_KEY_PIN, LOW);
   digitalWrite(LED_RX_PIN, HIGH);
-  digitalWrite(ON_PIN, LOW);
   pinMode(PTT_PIN, OUTPUT);
   pinMode(PTT_PA_PIN, OUTPUT);
+  pinMode(CW_KEY_PIN, OUTPUT);
   pinMode(LED_RX_PIN, OUTPUT);
-  pinMode(ON_PIN, OUTPUT);
 
   // GPIO35/GPIO39 are input-only and have no internal pull resistors.
   // External pull-ups are mandatory on both active-LOW inputs.
